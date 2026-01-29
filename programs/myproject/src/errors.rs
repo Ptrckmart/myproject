@@ -14,4 +14,8 @@ pub enum StablecoinError {
     InsufficientCollateral,
     #[msg("Math overflow")]
     MathOverflow,
+    #[msg("Unauthorized vault access")]
+    UnauthorizedVaultAccess,
+    #[msg("Insufficient minted balance to burn")]
+    InsufficientMintedBalance,
 }

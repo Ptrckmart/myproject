@@ -28,4 +28,12 @@ pub mod myproject {
     ) -> Result<()> {
         instructions::deposit::handler(ctx, sol_amount, solusd_amount)
     }
+
+    pub fn redeem_and_withdraw(
+        ctx: Context<RedeemAndWithdraw>,
+        solusd_amount: u64,
+        sol_amount: u64,
+    ) -> Result<()> {
+        instructions::redeem::handler(ctx, solusd_amount, sol_amount)
+    }
 }

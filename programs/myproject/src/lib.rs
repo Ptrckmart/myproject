@@ -37,4 +37,11 @@ pub mod myproject {
     ) -> Result<()> {
         instructions::redeem::handler(ctx, solusd_amount, sol_amount)
     }
+
+    pub fn liquidate(
+        ctx: Context<Liquidate>,
+        solusd_to_repay: u64,
+    ) -> Result<()> {
+        instructions::liquidate::handler(ctx, solusd_to_repay)
+    }
 }

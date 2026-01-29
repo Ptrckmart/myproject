@@ -22,4 +22,6 @@ pub enum StablecoinError {
     StaleOraclePrice,
     #[msg("Oracle returned an invalid price")]
     InvalidOraclePrice,
+    #[msg("Vault is not below liquidation threshold")]
+    VaultNotLiquidatable,
 }

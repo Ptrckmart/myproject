@@ -10,8 +10,9 @@ pub struct Config {
     pub collateral_ratio_bps: u64,
     /// Liquidation threshold in basis points (e.g., 13000 = 130%)
     pub liquidation_threshold_bps: u64,
-    /// SOL price in USD, 6 decimal places (e.g., 150_000_000 = $150.00)
-    /// Temporary: will be replaced by Pyth oracle in a later step
+    /// Pyth SOL/USD price feed account address
+    pub pyth_sol_usd_feed: Pubkey,
+    /// Fallback SOL price in USD (6 decimals). Used when Pyth feed is unavailable.
     pub sol_price_usd: u64,
     /// Bump seed for the config PDA
     pub bump: u8,
@@ -25,6 +26,7 @@ impl Config {
         + 32  // mint
         + 8   // collateral_ratio_bps
         + 8   // liquidation_threshold_bps
+        + 32  // pyth_sol_usd_feed
         + 8   // sol_price_usd
         + 1   // bump
         + 1;  // mint_authority_bump

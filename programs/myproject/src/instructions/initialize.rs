@@ -8,6 +8,7 @@ pub fn handler(
     ctx: Context<Initialize>,
     collateral_ratio_bps: u64,
     liquidation_threshold_bps: u64,
+    initial_sol_price_usd: u64,
 ) -> Result<()> {
     require!(
         collateral_ratio_bps > 10_000,
@@ -27,6 +28,8 @@ pub fn handler(
     config.mint = ctx.accounts.mint.key();
     config.collateral_ratio_bps = collateral_ratio_bps;
     config.liquidation_threshold_bps = liquidation_threshold_bps;
+    config.pyth_sol_usd_feed = ctx.accounts.pyth_sol_usd_feed.key();
+    config.sol_price_usd = initial_sol_price_usd;
     config.bump = ctx.bumps.config;
     config.mint_authority_bump = ctx.bumps.mint_authority;
 
@@ -61,6 +64,9 @@ pub struct Initialize<'info> {
         bump,
     )]
     pub mint_authority: UncheckedAccount<'info>,
+
+    /// CHECK: Pyth SOL/USD price feed account. Validated when reading prices.
+    pub pyth_sol_usd_feed: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,

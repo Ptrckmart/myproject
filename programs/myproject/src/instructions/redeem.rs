@@ -3,6 +3,7 @@ use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount};
 
 use crate::state::{Config, Vault};
 use crate::errors::StablecoinError;
+use crate::helpers;
 
 pub fn handler(
     ctx: Context<RedeemAndWithdraw>,
@@ -53,19 +54,22 @@ pub fn handler(
         vault.sol_deposited = vault.sol_deposited.checked_sub(sol_amount)
             .ok_or(StablecoinError::MathOverflow)?;
 
-        // If there's remaining debt, check collateral ratio
+        // If there's remaining debt, check collateral ratio using oracle
         if vault.solusd_minted > 0 {
-            let collateral_value_usd = (vault.sol_deposited as u128)
-                .checked_mul(config.sol_price_usd as u128)
-                .ok_or(StablecoinError::MathOverflow)?
-                .checked_div(1_000_000_000)
-                .ok_or(StablecoinError::MathOverflow)?;
+            let clock = Clock::get()?;
+            let pyth_info = ctx.accounts.pyth_price_feed.as_ref()
+                .map(|a| a.to_account_info());
+            let sol_price_usd = helpers::get_sol_price_usd(
+                &pyth_info,
+                config.sol_price_usd,
+                &clock,
+            )?;
 
-            let ratio_bps = collateral_value_usd
-                .checked_mul(10_000)
-                .ok_or(StablecoinError::MathOverflow)?
-                .checked_div(vault.solusd_minted as u128)
-                .ok_or(StablecoinError::MathOverflow)?;
+            let ratio_bps = helpers::calculate_ratio_bps(
+                vault.sol_deposited,
+                sol_price_usd,
+                vault.solusd_minted,
+            )?;
 
             require!(
                 ratio_bps >= config.collateral_ratio_bps as u128,
@@ -73,16 +77,7 @@ pub fn handler(
             );
         }
 
-        // Transfer SOL from vault PDA to user
-        let owner_key = ctx.accounts.owner.key();
-        let seeds = &[
-            b"vault".as_ref(),
-            owner_key.as_ref(),
-            &[vault.bump],
-        ];
-        let signer_seeds = &[&seeds[..]];
-
-        // Use raw lamport transfer from PDA
+        // Transfer SOL from vault PDA to user via raw lamport manipulation
         let vault_info = ctx.accounts.vault.to_account_info();
         let owner_info = ctx.accounts.owner.to_account_info();
 
@@ -94,9 +89,6 @@ pub fn handler(
             .lamports()
             .checked_add(sol_amount)
             .ok_or(StablecoinError::MathOverflow)?;
-
-        // Suppress unused variable warning — seeds kept for clarity
-        let _ = signer_seeds;
     }
 
     Ok(())
@@ -132,6 +124,9 @@ pub struct RedeemAndWithdraw<'info> {
         associated_token::authority = owner,
     )]
     pub user_solusd_account: Account<'info, TokenAccount>,
+
+    /// CHECK: Optional Pyth SOL/USD price feed account. Validated in helper.
+    pub pyth_price_feed: Option<UncheckedAccount<'info>>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,

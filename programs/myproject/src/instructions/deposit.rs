@@ -4,6 +4,7 @@ use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount};
 
 use crate::state::{Config, Vault};
 use crate::errors::StablecoinError;
+use crate::helpers;
 
 pub fn handler(
     ctx: Context<DepositCollateralAndMint>,
@@ -12,6 +13,16 @@ pub fn handler(
 ) -> Result<()> {
     require!(sol_amount > 0, StablecoinError::ZeroAmount);
     require!(solusd_amount > 0, StablecoinError::ZeroAmount);
+
+    // Get SOL price from Pyth oracle (or fallback)
+    let clock = Clock::get()?;
+    let pyth_info = ctx.accounts.pyth_price_feed.as_ref()
+        .map(|a| a.to_account_info());
+    let sol_price_usd = helpers::get_sol_price_usd(
+        &pyth_info,
+        ctx.accounts.config.sol_price_usd,
+        &clock,
+    )?;
 
     // Transfer SOL from user to the vault PDA first (before mutable borrow)
     system_program::transfer(
@@ -36,21 +47,12 @@ pub fn handler(
         .ok_or(StablecoinError::MathOverflow)?;
     vault.bump = ctx.bumps.vault;
 
-    // Check collateral ratio:
-    // collateral_value_usd = (sol_deposited * sol_price_usd) / 1e9  (lamports to SOL)
-    // ratio_bps = (collateral_value_usd * 10_000) / solusd_minted
-    // Both sol_price_usd and solusd_minted use 6 decimals, so they cancel out
-    let collateral_value_usd = (vault.sol_deposited as u128)
-        .checked_mul(config.sol_price_usd as u128)
-        .ok_or(StablecoinError::MathOverflow)?
-        .checked_div(1_000_000_000) // lamports -> SOL
-        .ok_or(StablecoinError::MathOverflow)?;
-
-    let ratio_bps = collateral_value_usd
-        .checked_mul(10_000)
-        .ok_or(StablecoinError::MathOverflow)?
-        .checked_div(vault.solusd_minted as u128)
-        .ok_or(StablecoinError::MathOverflow)?;
+    // Check collateral ratio
+    let ratio_bps = helpers::calculate_ratio_bps(
+        vault.sol_deposited,
+        sol_price_usd,
+        vault.solusd_minted,
+    )?;
 
     require!(
         ratio_bps >= config.collateral_ratio_bps as u128,
@@ -116,6 +118,9 @@ pub struct DepositCollateralAndMint<'info> {
         associated_token::authority = owner,
     )]
     pub user_solusd_account: Account<'info, TokenAccount>,
+
+    /// CHECK: Optional Pyth SOL/USD price feed account. Validated in helper.
+    pub pyth_price_feed: Option<UncheckedAccount<'info>>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,

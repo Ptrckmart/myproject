@@ -18,4 +18,8 @@ pub enum StablecoinError {
     UnauthorizedVaultAccess,
     #[msg("Insufficient minted balance to burn")]
     InsufficientMintedBalance,
+    #[msg("Oracle price is stale or unavailable")]
+    StaleOraclePrice,
+    #[msg("Oracle returned an invalid price")]
+    InvalidOraclePrice,
 }

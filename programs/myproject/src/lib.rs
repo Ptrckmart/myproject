@@ -44,4 +44,19 @@ pub mod myproject {
     ) -> Result<()> {
         instructions::liquidate::handler(ctx, solusd_to_repay)
     }
+
+    pub fn update_price(
+        ctx: Context<UpdateConfig>,
+        new_sol_price_usd: u64,
+    ) -> Result<()> {
+        instructions::admin::handle_update_price(ctx, new_sol_price_usd)
+    }
+
+    pub fn update_params(
+        ctx: Context<UpdateConfig>,
+        new_collateral_ratio_bps: Option<u64>,
+        new_liquidation_threshold_bps: Option<u64>,
+    ) -> Result<()> {
+        instructions::admin::handle_update_params(ctx, new_collateral_ratio_bps, new_liquidation_threshold_bps)
+    }
 }

@@ -16,7 +16,16 @@ pub mod myproject {
         ctx: Context<Initialize>,
         collateral_ratio: u64,
         liquidation_threshold: u64,
+        initial_sol_price_usd: u64,
     ) -> Result<()> {
-        instructions::initialize::handler(ctx, collateral_ratio, liquidation_threshold)
+        instructions::initialize::handler(ctx, collateral_ratio, liquidation_threshold, initial_sol_price_usd)
+    }
+
+    pub fn deposit_collateral_and_mint(
+        ctx: Context<DepositCollateralAndMint>,
+        sol_amount: u64,
+        solusd_amount: u64,
+    ) -> Result<()> {
+        instructions::deposit::handler(ctx, sol_amount, solusd_amount)
     }
 }

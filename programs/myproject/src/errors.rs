@@ -8,4 +8,10 @@ pub enum StablecoinError {
     InvalidLiquidationThreshold,
     #[msg("Liquidation threshold must be greater than 100%")]
     LiquidationThresholdTooLow,
+    #[msg("Amount must be greater than zero")]
+    ZeroAmount,
+    #[msg("Insufficient collateral to maintain required ratio")]
+    InsufficientCollateral,
+    #[msg("Math overflow")]
+    MathOverflow,
 }

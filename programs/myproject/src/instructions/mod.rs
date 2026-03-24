@@ -1,11 +1,11 @@
 pub mod initialize;
-pub mod deposit;
+pub mod mint;
 pub mod redeem;
-pub mod liquidate;
 pub mod admin;
+pub mod withdraw_fees;
 
 pub use initialize::*;
-pub use deposit::*;
+pub use mint::*;
 pub use redeem::*;
-pub use liquidate::*;
 pub use admin::*;
+pub use withdraw_fees::*;

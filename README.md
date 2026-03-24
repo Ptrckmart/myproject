@@ -1,10 +1,10 @@
-# solUSD - Crypto-Collateralized Stablecoin on Solana
+# solUSD - Fiat-Backed Stablecoin on Solana
 
-A decentralized stablecoin protocol built on Solana using the Anchor framework. Users deposit SOL as collateral to mint solUSD, a USD-pegged stablecoin with 6 decimal places.
+A decentralized stablecoin protocol built on Solana using the Anchor framework. Users deposit SOL to mint solUSD at the current SOL/USD exchange rate, paying a small fee. solUSD is a USD-pegged stablecoin with 6 decimal places.
 
 ## Overview
 
-solUSD is a crypto-collateralized stablecoin that maintains its peg through overcollateralization. Users lock SOL in personal vaults and mint solUSD against their collateral. The protocol enforces a minimum collateral ratio and includes a liquidation mechanism to keep the system solvent.
+solUSD is a fiat-backed stablecoin where anyone can mint tokens by depositing SOL and redeem tokens to receive SOL back. The protocol charges a small fee on both operations to cover gas and fund operational improvements. All deposited SOL is held in a central reserve PDA, and fees accumulate in a separate treasury PDA.
 
 **Program ID:** `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J`
 
@@ -12,9 +12,8 @@ solUSD is a crypto-collateralized stablecoin that maintains its peg through over
 
 | Parameter | Default | Description |
 |---|---|---|
-| Collateral Ratio | 150% (15,000 bps) | Minimum ratio of collateral value to minted solUSD |
-| Liquidation Threshold | 130% (13,000 bps) | Ratio below which a vault can be liquidated |
-| Liquidation Bonus | 5% (500 bps) | Bonus SOL awarded to liquidators |
+| Fee | 0.30% (30 bps) | Applied to both mint and redeem operations |
+| Max Fee | 10% (1,000 bps) | Upper limit for fee adjustments |
 | Token Decimals | 6 | Matches USDC convention |
 | Max Oracle Age | 60 seconds | Pyth price feed staleness limit |
 
@@ -23,50 +22,55 @@ solUSD is a crypto-collateralized stablecoin that maintains its peg through over
 ### Account Structures
 
 **Config** (PDA seeded with `"config"`)
-- Stores protocol-wide settings: authority, mint address, collateral ratio, liquidation threshold
-- Holds Pyth SOL/USD price feed address and a fallback price
+- Stores protocol settings: authority, mint address, fee rate, oracle feed
+- Tracks total SOL reserves and total outstanding solUSD
 - Created once during initialization
 
-**Vault** (PDA seeded with `"vault"` + owner pubkey)
-- Per-user account tracking deposited SOL (lamports) and minted solUSD
-- Created automatically on first deposit via `init_if_needed`
+**Reserve** (PDA seeded with `"reserve"`)
+- Holds all SOL deposits backing outstanding solUSD
+- A bare PDA with no data, just holds lamports
+
+**Treasury** (PDA seeded with `"treasury"`)
+- Accumulates fee revenue from mint and redeem operations
+- Authority can withdraw fees for operational use
 
 **Mint Authority** (PDA seeded with `"mint-authority"`)
 - Program-controlled authority for the solUSD SPL token mint
-- Signs mint/burn operations via CPI with PDA signer seeds
 
 ### Instructions
 
 #### `initialize`
-Sets up the protocol: creates the Config PDA, initializes the solUSD token mint (6 decimals), and stores the Pyth oracle address and initial parameters.
+Sets up the protocol: creates Config PDA, initializes solUSD token mint (6 decimals), derives reserve and treasury PDAs, and stores initial fee rate and oracle address.
 
-#### `deposit_collateral_and_mint`
-Combined instruction that deposits SOL collateral and mints solUSD in a single transaction. Validates the resulting collateral ratio meets the minimum requirement.
+#### `mint`
+Anyone can deposit SOL to receive solUSD. The fee is deducted from the deposited SOL before conversion:
+```
+fee_lamports = sol_amount * fee_bps / 10_000
+net_sol = sol_amount - fee_lamports
+solusd_minted = net_sol * sol_price_usd / 1e9
+```
+Net SOL goes to the reserve, fee goes to the treasury.
 
-#### `redeem_and_withdraw`
-Burns solUSD and withdraws SOL collateral. If any debt remains after redemption, the collateral ratio is re-validated against the oracle price.
-
-#### `liquidate`
-Allows any user to liquidate an undercollateralized vault (below 130% ratio). The liquidator burns solUSD to repay the vault's debt and receives the equivalent SOL plus a 5% bonus.
+#### `redeem`
+Anyone can burn solUSD to receive SOL back. The fee is deducted from the SOL being returned:
+```
+gross_sol = solusd_amount * 1e9 / sol_price_usd
+fee_lamports = gross_sol * fee_bps / 10_000
+net_sol_to_user = gross_sol - fee_lamports
+```
 
 #### `update_price`
-Admin-only instruction to update the fallback SOL/USD price. Used when the Pyth oracle is unavailable.
+Admin-only: updates the fallback SOL/USD price used when Pyth oracle is unavailable.
 
-#### `update_params`
-Admin-only instruction to update the collateral ratio and/or liquidation threshold. Validates that the liquidation threshold remains below the collateral ratio and both stay above 100%.
+#### `update_fee`
+Admin-only: updates the fee rate (max 10%).
+
+#### `withdraw_fees`
+Admin-only: withdraws accumulated SOL fees from the treasury.
 
 ### Oracle Integration
 
-The protocol uses [Pyth Network](https://pyth.network/) for SOL/USD price feeds via `pyth-sdk-solana`. Prices are normalized to 6 decimal places. If the Pyth feed is unavailable or stale (>60 seconds), the protocol falls back to a manually-set price stored in the Config account.
-
-### Collateral Ratio Calculation
-
-```
-collateral_value_usd = (sol_deposited_lamports * sol_price_usd) / 1e9
-ratio_bps = (collateral_value_usd * 10000) / solusd_minted
-```
-
-All arithmetic uses checked math (`checked_add`, `checked_mul`, `checked_div`, `checked_sub`) to prevent overflows.
+The protocol uses [Pyth Network](https://pyth.network/) for SOL/USD price feeds via `pyth-sdk-solana`. Prices are normalized to 6 decimal places. If the Pyth feed is unavailable or stale (>60 seconds), the protocol falls back to a manually-set price stored in Config.
 
 ## Project Structure
 
@@ -75,16 +79,15 @@ myproject/
 ├── programs/myproject/src/
 │   ├── lib.rs                 # Program entry point and instruction routing
 │   ├── errors.rs              # Custom error codes
-│   ├── helpers.rs             # Oracle price reading and ratio calculation
+│   ├── helpers.rs             # Oracle price, fee calculation, SOL/USD conversion
 │   ├── state/
-│   │   ├── config.rs          # Config account definition
-│   │   └── vault.rs           # Vault account definition
+│   │   └── config.rs          # Config account definition
 │   └── instructions/
 │       ├── initialize.rs      # Protocol initialization
-│       ├── deposit.rs         # Deposit SOL + mint solUSD
-│       ├── redeem.rs          # Burn solUSD + withdraw SOL
-│       ├── liquidate.rs       # Liquidation mechanism
-│       └── admin.rs           # Admin parameter updates
+│       ├── mint.rs             # Deposit SOL → mint solUSD
+│       ├── redeem.rs           # Burn solUSD → withdraw SOL
+│       ├── admin.rs            # Admin price/fee updates
+│       └── withdraw_fees.rs    # Admin fee withdrawal
 ├── tests/
 │   └── myproject.ts           # TypeScript integration tests
 ├── Anchor.toml                # Anchor configuration
@@ -93,7 +96,7 @@ myproject/
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) (toolchain 1.88.0 specified in `rust-toolchain`)
+- [Rust](https://rustup.rs/) (toolchain specified in `rust-toolchain`)
 - [Solana CLI](https://docs.solanalabs.com/cli/install) v1.18.x
 - [Anchor CLI](https://www.anchor-lang.com/docs/installation) v0.30.0
 - [Node.js](https://nodejs.org/) and [Yarn](https://yarnpkg.com/)
@@ -117,19 +120,15 @@ anchor test
 
 The test suite covers:
 
-- Protocol initialization with parameter validation
-- Depositing collateral and minting solUSD
-- Collateral ratio enforcement (rejects undercollateralized mints)
-- Redeeming solUSD and withdrawing collateral
+- Protocol initialization with fee and price parameters
+- Minting solUSD by depositing SOL (with fee verification)
+- Multi-user minting and accounting consistency
+- Redeeming solUSD for SOL (with fee verification)
+- Zero amount rejection
+- Admin fee updates and max fee enforcement
 - Admin price updates
-- Admin parameter updates
+- Admin fee withdrawal from treasury
 - Unauthorized access rejection
-
-Run tests:
-
-```bash
-anchor test
-```
 
 ## Dependencies
 
@@ -137,7 +136,7 @@ anchor test
 
 | Crate | Version | Purpose |
 |---|---|---|
-| `anchor-lang` | 0.30.0 | Solana framework with `init-if-needed` feature |
+| `anchor-lang` | 0.30.0 | Solana framework |
 | `anchor-spl` | 0.30.0 | SPL Token program integration |
 | `pyth-sdk-solana` | 0.10.3 | Pyth oracle price feed integration |
 
@@ -154,18 +153,16 @@ anchor test
 
 | Error | Description |
 |---|---|
-| `InvalidCollateralRatio` | Collateral ratio must be greater than 100% |
-| `InvalidLiquidationThreshold` | Liquidation threshold must be less than collateral ratio |
-| `LiquidationThresholdTooLow` | Liquidation threshold must be greater than 100% |
 | `ZeroAmount` | Amount must be greater than zero |
-| `InsufficientCollateral` | Insufficient collateral to maintain required ratio |
 | `MathOverflow` | Arithmetic overflow detected |
-| `UnauthorizedVaultAccess` | Caller does not own the vault |
-| `InsufficientMintedBalance` | Not enough minted solUSD to burn |
 | `StaleOraclePrice` | Pyth price feed is older than 60 seconds |
 | `InvalidOraclePrice` | Pyth returned a non-positive price |
-| `VaultNotLiquidatable` | Vault collateral ratio is above liquidation threshold |
 | `UnauthorizedAccess` | Caller is not the protocol authority |
+| `FeeTooHigh` | Fee must not exceed 1,000 basis points (10%) |
+| `InsufficientReserves` | Reserve does not have enough SOL for redemption |
+| `InsufficientTreasuryBalance` | Treasury does not have enough SOL for withdrawal |
+| `MintAmountTooSmall` | Deposit too small, results in zero solUSD after fees |
+| `RedeemAmountTooSmall` | Redemption too small, results in zero SOL after fees |
 
 ## License
 

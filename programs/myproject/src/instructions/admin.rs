@@ -15,31 +15,14 @@ pub fn handle_update_price(
     Ok(())
 }
 
-pub fn handle_update_params(
+pub fn handle_update_fee(
     ctx: Context<UpdateConfig>,
-    new_collateral_ratio_bps: Option<u64>,
-    new_liquidation_threshold_bps: Option<u64>,
+    new_fee_bps: u64,
 ) -> Result<()> {
+    require!(new_fee_bps <= 1_000, StablecoinError::FeeTooHigh);
+
     let config = &mut ctx.accounts.config;
-
-    let collateral_ratio = new_collateral_ratio_bps.unwrap_or(config.collateral_ratio_bps);
-    let liquidation_threshold = new_liquidation_threshold_bps.unwrap_or(config.liquidation_threshold_bps);
-
-    require!(
-        collateral_ratio > 10_000,
-        StablecoinError::InvalidCollateralRatio
-    );
-    require!(
-        liquidation_threshold > 10_000,
-        StablecoinError::LiquidationThresholdTooLow
-    );
-    require!(
-        liquidation_threshold < collateral_ratio,
-        StablecoinError::InvalidLiquidationThreshold
-    );
-
-    config.collateral_ratio_bps = collateral_ratio;
-    config.liquidation_threshold_bps = liquidation_threshold;
+    config.fee_bps = new_fee_bps;
 
     Ok(())
 }

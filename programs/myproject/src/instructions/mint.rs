@@ -1,16 +1,16 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount};
+use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount};
 
 use crate::state::Config;
 use crate::errors::StablecoinError;
 use crate::helpers;
 
 pub fn handler(
-    ctx: Context<RedeemSolUsd>,
-    solusd_amount: u64,
+    ctx: Context<MintSolUsd>,
+    sol_amount: u64,
 ) -> Result<()> {
-    require!(solusd_amount > 0, StablecoinError::ZeroAmount);
+    require!(sol_amount > 0, StablecoinError::ZeroAmount);
 
     let config = &ctx.accounts.config;
 
@@ -24,74 +24,69 @@ pub fn handler(
         &clock,
     )?;
 
-    // Calculate gross SOL equivalent and fees
-    let gross_sol = helpers::solusd_to_sol(solusd_amount, sol_price_usd)?;
-    let fee_lamports = helpers::calculate_fee_lamports(gross_sol, config.fee_bps)?;
-    let net_sol_to_user = gross_sol.checked_sub(fee_lamports)
+    // Calculate fee and net amounts
+    let fee_lamports = helpers::calculate_fee_lamports(sol_amount, config.fee_bps)?;
+    let net_sol = sol_amount.checked_sub(fee_lamports)
         .ok_or(StablecoinError::MathOverflow)?;
+    let solusd_to_mint = helpers::sol_to_solusd(net_sol, sol_price_usd)?;
 
-    require!(net_sol_to_user > 0, StablecoinError::RedeemAmountTooSmall);
-    require!(
-        gross_sol <= config.total_sol_reserves,
-        StablecoinError::InsufficientReserves
-    );
+    require!(solusd_to_mint > 0, StablecoinError::MintAmountTooSmall);
 
-    // Burn solUSD from user's token account
-    token::burn(
-        CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            Burn {
-                mint: ctx.accounts.mint.to_account_info(),
-                from: ctx.accounts.user_solusd_account.to_account_info(),
-                authority: ctx.accounts.user.to_account_info(),
-            },
-        ),
-        solusd_amount,
-    )?;
-
-    // Transfer net SOL from reserve PDA to user
-    let reserve_seeds = &[b"reserve".as_ref(), &[config.reserve_bump]];
-    let reserve_signer = &[&reserve_seeds[..]];
-
+    // Transfer net SOL from user to reserve PDA
     system_program::transfer(
-        CpiContext::new_with_signer(
+        CpiContext::new(
             ctx.accounts.system_program.to_account_info(),
             system_program::Transfer {
-                from: ctx.accounts.reserve.to_account_info(),
-                to: ctx.accounts.user.to_account_info(),
+                from: ctx.accounts.user.to_account_info(),
+                to: ctx.accounts.reserve.to_account_info(),
             },
-            reserve_signer,
         ),
-        net_sol_to_user,
+        net_sol,
     )?;
 
-    // Transfer fee from reserve PDA to treasury PDA
+    // Transfer fee from user to treasury PDA
     if fee_lamports > 0 {
         system_program::transfer(
-            CpiContext::new_with_signer(
+            CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
                 system_program::Transfer {
-                    from: ctx.accounts.reserve.to_account_info(),
+                    from: ctx.accounts.user.to_account_info(),
                     to: ctx.accounts.treasury.to_account_info(),
                 },
-                reserve_signer,
             ),
             fee_lamports,
         )?;
     }
 
+    // Mint solUSD to user's token account
+    let seeds = &[b"mint-authority".as_ref(), &[config.mint_authority_bump]];
+    let signer_seeds = &[&seeds[..]];
+
+    token::mint_to(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            MintTo {
+                mint: ctx.accounts.mint.to_account_info(),
+                to: ctx.accounts.user_solusd_account.to_account_info(),
+                authority: ctx.accounts.mint_authority.to_account_info(),
+            },
+            signer_seeds,
+        ),
+        solusd_to_mint,
+    )?;
+
     // Update config accounting
     let config = &mut ctx.accounts.config;
-    config.total_sol_reserves = config.total_sol_reserves.checked_sub(gross_sol)
+    config.total_sol_reserves = config.total_sol_reserves.checked_add(net_sol)
         .ok_or(StablecoinError::MathOverflow)?;
-    config.total_solusd_minted = config.total_solusd_minted.checked_sub(solusd_amount)
+    config.total_solusd_minted = config.total_solusd_minted.checked_add(solusd_to_mint)
         .ok_or(StablecoinError::MathOverflow)?;
 
     Ok(())
 }
 
 #[derive(Accounts)]
-pub struct RedeemSolUsd<'info> {
+pub struct MintSolUsd<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
@@ -108,7 +103,14 @@ pub struct RedeemSolUsd<'info> {
     )]
     pub mint: Account<'info, Mint>,
 
-    /// CHECK: Reserve PDA holding SOL. Validated by seeds.
+    /// CHECK: PDA used as mint authority
+    #[account(
+        seeds = [b"mint-authority"],
+        bump = config.mint_authority_bump,
+    )]
+    pub mint_authority: UncheckedAccount<'info>,
+
+    /// CHECK: Reserve PDA that holds SOL. Validated by seeds.
     #[account(
         mut,
         seeds = [b"reserve"],
@@ -116,7 +118,7 @@ pub struct RedeemSolUsd<'info> {
     )]
     pub reserve: UncheckedAccount<'info>,
 
-    /// CHECK: Treasury PDA for fee revenue. Validated by seeds.
+    /// CHECK: Treasury PDA that holds fee revenue. Validated by seeds.
     #[account(
         mut,
         seeds = [b"treasury"],

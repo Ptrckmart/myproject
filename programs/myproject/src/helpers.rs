@@ -49,21 +49,32 @@ pub fn get_sol_price_usd<'info>(
     }
 }
 
-/// Calculate the collateral ratio in basis points.
-pub fn calculate_ratio_bps(
-    sol_deposited_lamports: u64,
-    sol_price_usd: u64,
-    solusd_minted: u64,
-) -> Result<u128> {
-    let collateral_value_usd = (sol_deposited_lamports as u128)
+/// Calculate fee in lamports for a given SOL amount.
+pub fn calculate_fee_lamports(sol_amount: u64, fee_bps: u64) -> Result<u64> {
+    let fee = (sol_amount as u128)
+        .checked_mul(fee_bps as u128)
+        .ok_or(StablecoinError::MathOverflow)?
+        .checked_div(10_000)
+        .ok_or(StablecoinError::MathOverflow)?;
+    Ok(fee as u64)
+}
+
+/// Convert SOL lamports to solUSD (6 decimals) at a given price.
+pub fn sol_to_solusd(lamports: u64, sol_price_usd: u64) -> Result<u64> {
+    let solusd = (lamports as u128)
         .checked_mul(sol_price_usd as u128)
         .ok_or(StablecoinError::MathOverflow)?
-        .checked_div(1_000_000_000) // lamports -> SOL
+        .checked_div(1_000_000_000)
         .ok_or(StablecoinError::MathOverflow)?;
+    Ok(solusd as u64)
+}
 
-    collateral_value_usd
-        .checked_mul(10_000)
+/// Convert solUSD (6 decimals) to SOL lamports at a given price.
+pub fn solusd_to_sol(solusd: u64, sol_price_usd: u64) -> Result<u64> {
+    let lamports = (solusd as u128)
+        .checked_mul(1_000_000_000)
         .ok_or(StablecoinError::MathOverflow)?
-        .checked_div(solusd_minted as u128)
-        .ok_or(error!(StablecoinError::MathOverflow))
+        .checked_div(sol_price_usd as u128)
+        .ok_or(StablecoinError::MathOverflow)?;
+    Ok(lamports as u64)
 }

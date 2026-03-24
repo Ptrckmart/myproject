@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::system_program;
-use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount};
+use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount, Transfer};
 
 use crate::state::Config;
 use crate::errors::StablecoinError;
@@ -8,53 +7,45 @@ use crate::helpers;
 
 pub fn handler(
     ctx: Context<MintSolUsd>,
-    sol_amount: u64,
+    usdc_amount: u64,
 ) -> Result<()> {
-    require!(sol_amount > 0, StablecoinError::ZeroAmount);
+    require!(usdc_amount > 0, StablecoinError::ZeroAmount);
 
     let config = &ctx.accounts.config;
 
-    // Get SOL price from Pyth oracle (or fallback)
-    let clock = Clock::get()?;
-    let pyth_info = ctx.accounts.pyth_price_feed.as_ref()
-        .map(|a| a.to_account_info());
-    let sol_price_usd = helpers::get_sol_price_usd(
-        &pyth_info,
-        config.sol_price_usd,
-        &clock,
-    )?;
-
-    // Calculate fee and net amounts
-    let fee_lamports = helpers::calculate_fee_lamports(sol_amount, config.fee_bps)?;
-    let net_sol = sol_amount.checked_sub(fee_lamports)
+    // Calculate fee and net amounts (1:1, both 6 decimals)
+    let fee = helpers::calculate_fee(usdc_amount, config.fee_bps)?;
+    let net_usdc = usdc_amount.checked_sub(fee)
         .ok_or(StablecoinError::MathOverflow)?;
-    let solusd_to_mint = helpers::sol_to_solusd(net_sol, sol_price_usd)?;
+    let solusd_to_mint = net_usdc;
 
     require!(solusd_to_mint > 0, StablecoinError::MintAmountTooSmall);
 
-    // Transfer net SOL from user to reserve PDA
-    system_program::transfer(
+    // Transfer net USDC from user to reserve
+    token::transfer(
         CpiContext::new(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: ctx.accounts.user.to_account_info(),
-                to: ctx.accounts.reserve.to_account_info(),
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.user_usdc_account.to_account_info(),
+                to: ctx.accounts.reserve_vault.to_account_info(),
+                authority: ctx.accounts.user.to_account_info(),
             },
         ),
-        net_sol,
+        net_usdc,
     )?;
 
-    // Transfer fee from user to treasury PDA
-    if fee_lamports > 0 {
-        system_program::transfer(
+    // Transfer fee USDC from user to treasury
+    if fee > 0 {
+        token::transfer(
             CpiContext::new(
-                ctx.accounts.system_program.to_account_info(),
-                system_program::Transfer {
-                    from: ctx.accounts.user.to_account_info(),
-                    to: ctx.accounts.treasury.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.user_usdc_account.to_account_info(),
+                    to: ctx.accounts.treasury_vault.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
                 },
             ),
-            fee_lamports,
+            fee,
         )?;
     }
 
@@ -77,7 +68,7 @@ pub fn handler(
 
     // Update config accounting
     let config = &mut ctx.accounts.config;
-    config.total_sol_reserves = config.total_sol_reserves.checked_add(net_sol)
+    config.total_usdc_reserves = config.total_usdc_reserves.checked_add(net_usdc)
         .ok_or(StablecoinError::MathOverflow)?;
     config.total_solusd_minted = config.total_solusd_minted.checked_add(solusd_to_mint)
         .ok_or(StablecoinError::MathOverflow)?;
@@ -110,22 +101,30 @@ pub struct MintSolUsd<'info> {
     )]
     pub mint_authority: UncheckedAccount<'info>,
 
-    /// CHECK: Reserve PDA that holds SOL. Validated by seeds.
+    /// Reserve USDC token account
     #[account(
         mut,
-        seeds = [b"reserve"],
-        bump = config.reserve_bump,
+        seeds = [b"reserve-vault"],
+        bump,
     )]
-    pub reserve: UncheckedAccount<'info>,
+    pub reserve_vault: Account<'info, TokenAccount>,
 
-    /// CHECK: Treasury PDA that holds fee revenue. Validated by seeds.
+    /// Treasury USDC token account
     #[account(
         mut,
-        seeds = [b"treasury"],
-        bump = config.treasury_bump,
+        seeds = [b"treasury-vault"],
+        bump,
     )]
-    pub treasury: UncheckedAccount<'info>,
+    pub treasury_vault: Account<'info, TokenAccount>,
 
+    /// User's USDC token account (source)
+    #[account(
+        mut,
+        constraint = user_usdc_account.mint == config.usdc_mint,
+    )]
+    pub user_usdc_account: Account<'info, TokenAccount>,
+
+    /// User's solUSD token account (destination)
     #[account(
         mut,
         associated_token::mint = mint,
@@ -133,9 +132,5 @@ pub struct MintSolUsd<'info> {
     )]
     pub user_solusd_account: Account<'info, TokenAccount>,
 
-    /// CHECK: Optional Pyth SOL/USD price feed. Validated in helper.
-    pub pyth_price_feed: Option<UncheckedAccount<'info>>,
-
     pub token_program: Program<'info, Token>,
-    pub system_program: Program<'info, System>,
 }

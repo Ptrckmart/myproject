@@ -1,10 +1,10 @@
-# solUSD - Fiat-Backed Stablecoin on Solana
+# solUSD - USDC-Backed Stablecoin on Solana
 
-A decentralized stablecoin protocol built on Solana using the Anchor framework. Users deposit SOL to mint solUSD at the current SOL/USD exchange rate, paying a small fee. solUSD is a USD-pegged stablecoin with 6 decimal places.
+A decentralized stablecoin protocol built on Solana using the Anchor framework. Users deposit USDC to mint solUSD at a 1:1 rate (minus a small fee), and burn solUSD to redeem USDC.
 
 ## Overview
 
-solUSD is a fiat-backed stablecoin where anyone can mint tokens by depositing SOL and redeem tokens to receive SOL back. The protocol charges a small fee on both operations to cover gas and fund operational improvements. All deposited SOL is held in a central reserve PDA, and fees accumulate in a separate treasury PDA.
+solUSD is a USDC-backed stablecoin where anyone can mint tokens by depositing USDC and redeem tokens to receive USDC back. The protocol charges a small fee on both operations to cover operational costs. All deposited USDC is held in a PDA-owned reserve token account, and fees accumulate in a separate PDA-owned treasury token account.
 
 **Program ID:** `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J`
 
@@ -15,24 +15,23 @@ solUSD is a fiat-backed stablecoin where anyone can mint tokens by depositing SO
 | Fee | 0.30% (30 bps) | Applied to both mint and redeem operations |
 | Max Fee | 10% (1,000 bps) | Upper limit for fee adjustments |
 | Token Decimals | 6 | Matches USDC convention |
-| Max Oracle Age | 60 seconds | Pyth price feed staleness limit |
 
 ## Architecture
 
 ### Account Structures
 
 **Config** (PDA seeded with `"config"`)
-- Stores protocol settings: authority, mint address, fee rate, oracle feed
-- Tracks total SOL reserves and total outstanding solUSD
+- Stores protocol settings: authority, solUSD mint, accepted USDC mint, fee rate
+- Tracks total USDC reserves and total outstanding solUSD
 - Created once during initialization
 
-**Reserve** (PDA seeded with `"reserve"`)
-- Holds all SOL deposits backing outstanding solUSD
-- A bare PDA with no data, just holds lamports
+**Reserve Vault** (PDA token account seeded with `"reserve-vault"`)
+- SPL token account holding all USDC deposits backing outstanding solUSD
+- Owned by the Reserve PDA (`"reserve"`)
 
-**Treasury** (PDA seeded with `"treasury"`)
-- Accumulates fee revenue from mint and redeem operations
-- Authority can withdraw fees for operational use
+**Treasury Vault** (PDA token account seeded with `"treasury-vault"`)
+- SPL token account accumulating USDC fee revenue
+- Owned by the Treasury PDA (`"treasury"`)
 
 **Mint Authority** (PDA seeded with `"mint-authority"`)
 - Program-controlled authority for the solUSD SPL token mint
@@ -40,37 +39,30 @@ solUSD is a fiat-backed stablecoin where anyone can mint tokens by depositing SO
 ### Instructions
 
 #### `initialize`
-Sets up the protocol: creates Config PDA, initializes solUSD token mint (6 decimals), derives reserve and treasury PDAs, and stores initial fee rate and oracle address.
+Sets up the protocol: creates Config PDA, initializes solUSD token mint (6 decimals), creates PDA-owned USDC token accounts for reserve and treasury, and stores the initial fee rate.
 
 #### `mint`
-Anyone can deposit SOL to receive solUSD. The fee is deducted from the deposited SOL before conversion:
+Anyone can deposit USDC to receive solUSD at a 1:1 rate minus fees:
 ```
-fee_lamports = sol_amount * fee_bps / 10_000
-net_sol = sol_amount - fee_lamports
-solusd_minted = net_sol * sol_price_usd / 1e9
+fee = usdc_amount * fee_bps / 10,000
+net_usdc = usdc_amount - fee
+solusd_minted = net_usdc
 ```
-Net SOL goes to the reserve, fee goes to the treasury.
+Net USDC goes to the reserve vault, fee goes to the treasury vault.
 
 #### `redeem`
-Anyone can burn solUSD to receive SOL back. The fee is deducted from the SOL being returned:
+Anyone can burn solUSD to receive USDC back at a 1:1 rate minus fees:
 ```
-gross_sol = solusd_amount * 1e9 / sol_price_usd
-fee_lamports = gross_sol * fee_bps / 10_000
-net_sol_to_user = gross_sol - fee_lamports
+gross_usdc = solusd_amount (1:1)
+fee = gross_usdc * fee_bps / 10,000
+net_usdc_to_user = gross_usdc - fee
 ```
-
-#### `update_price`
-Admin-only: updates the fallback SOL/USD price used when Pyth oracle is unavailable.
 
 #### `update_fee`
 Admin-only: updates the fee rate (max 10%).
 
 #### `withdraw_fees`
-Admin-only: withdraws accumulated SOL fees from the treasury.
-
-### Oracle Integration
-
-The protocol uses [Pyth Network](https://pyth.network/) for SOL/USD price feeds via `pyth-sdk-solana`. Prices are normalized to 6 decimal places. If the Pyth feed is unavailable or stale (>60 seconds), the protocol falls back to a manually-set price stored in Config.
+Admin-only: withdraws accumulated USDC fees from the treasury vault.
 
 ## Project Structure
 
@@ -79,15 +71,15 @@ myproject/
 ├── programs/myproject/src/
 │   ├── lib.rs                 # Program entry point and instruction routing
 │   ├── errors.rs              # Custom error codes
-│   ├── helpers.rs             # Oracle price, fee calculation, SOL/USD conversion
+│   ├── helpers.rs             # Fee calculation utility
 │   ├── state/
 │   │   └── config.rs          # Config account definition
 │   └── instructions/
 │       ├── initialize.rs      # Protocol initialization
-│       ├── mint.rs             # Deposit SOL → mint solUSD
-│       ├── redeem.rs           # Burn solUSD → withdraw SOL
-│       ├── admin.rs            # Admin price/fee updates
-│       └── withdraw_fees.rs    # Admin fee withdrawal
+│       ├── mint.rs            # Deposit USDC → mint solUSD
+│       ├── redeem.rs          # Burn solUSD → withdraw USDC
+│       ├── admin.rs           # Admin fee updates
+│       └── withdraw_fees.rs   # Admin fee withdrawal
 ├── tests/
 │   └── myproject.ts           # TypeScript integration tests
 ├── Anchor.toml                # Anchor configuration
@@ -120,13 +112,12 @@ anchor test
 
 The test suite covers:
 
-- Protocol initialization with fee and price parameters
-- Minting solUSD by depositing SOL (with fee verification)
+- Protocol initialization with USDC mint and fee parameters
+- Minting solUSD by depositing USDC (with fee verification)
 - Multi-user minting and accounting consistency
-- Redeeming solUSD for SOL (with fee verification)
+- Redeeming solUSD for USDC (with fee verification)
 - Zero amount rejection
 - Admin fee updates and max fee enforcement
-- Admin price updates
 - Admin fee withdrawal from treasury
 - Unauthorized access rejection
 
@@ -138,7 +129,6 @@ The test suite covers:
 |---|---|---|
 | `anchor-lang` | 0.30.0 | Solana framework |
 | `anchor-spl` | 0.30.0 | SPL Token program integration |
-| `pyth-sdk-solana` | 0.10.3 | Pyth oracle price feed integration |
 
 ### TypeScript (Tests/Client)
 
@@ -155,14 +145,12 @@ The test suite covers:
 |---|---|
 | `ZeroAmount` | Amount must be greater than zero |
 | `MathOverflow` | Arithmetic overflow detected |
-| `StaleOraclePrice` | Pyth price feed is older than 60 seconds |
-| `InvalidOraclePrice` | Pyth returned a non-positive price |
 | `UnauthorizedAccess` | Caller is not the protocol authority |
 | `FeeTooHigh` | Fee must not exceed 1,000 basis points (10%) |
-| `InsufficientReserves` | Reserve does not have enough SOL for redemption |
-| `InsufficientTreasuryBalance` | Treasury does not have enough SOL for withdrawal |
+| `InsufficientReserves` | Reserve does not have enough USDC for redemption |
+| `InsufficientTreasuryBalance` | Treasury does not have enough USDC for withdrawal |
 | `MintAmountTooSmall` | Deposit too small, results in zero solUSD after fees |
-| `RedeemAmountTooSmall` | Redemption too small, results in zero SOL after fees |
+| `RedeemAmountTooSmall` | Redemption too small, results in zero USDC after fees |
 
 ## License
 

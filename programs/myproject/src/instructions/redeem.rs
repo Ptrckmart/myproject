@@ -1,6 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::system_program;
-use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount};
+use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
 
 use crate::state::Config;
 use crate::errors::StablecoinError;
@@ -14,25 +13,15 @@ pub fn handler(
 
     let config = &ctx.accounts.config;
 
-    // Get SOL price from Pyth oracle (or fallback)
-    let clock = Clock::get()?;
-    let pyth_info = ctx.accounts.pyth_price_feed.as_ref()
-        .map(|a| a.to_account_info());
-    let sol_price_usd = helpers::get_sol_price_usd(
-        &pyth_info,
-        config.sol_price_usd,
-        &clock,
-    )?;
-
-    // Calculate gross SOL equivalent and fees
-    let gross_sol = helpers::solusd_to_sol(solusd_amount, sol_price_usd)?;
-    let fee_lamports = helpers::calculate_fee_lamports(gross_sol, config.fee_bps)?;
-    let net_sol_to_user = gross_sol.checked_sub(fee_lamports)
+    // 1:1 conversion: solusd_amount == gross USDC
+    let gross_usdc = solusd_amount;
+    let fee = helpers::calculate_fee(gross_usdc, config.fee_bps)?;
+    let net_usdc_to_user = gross_usdc.checked_sub(fee)
         .ok_or(StablecoinError::MathOverflow)?;
 
-    require!(net_sol_to_user > 0, StablecoinError::RedeemAmountTooSmall);
+    require!(net_usdc_to_user > 0, StablecoinError::RedeemAmountTooSmall);
     require!(
-        gross_sol <= config.total_sol_reserves,
+        gross_usdc <= config.total_usdc_reserves,
         StablecoinError::InsufficientReserves
     );
 
@@ -49,40 +38,42 @@ pub fn handler(
         solusd_amount,
     )?;
 
-    // Transfer net SOL from reserve PDA to user
+    // Transfer net USDC from reserve to user
     let reserve_seeds = &[b"reserve".as_ref(), &[config.reserve_bump]];
     let reserve_signer = &[&reserve_seeds[..]];
 
-    system_program::transfer(
+    token::transfer(
         CpiContext::new_with_signer(
-            ctx.accounts.system_program.to_account_info(),
-            system_program::Transfer {
-                from: ctx.accounts.reserve.to_account_info(),
-                to: ctx.accounts.user.to_account_info(),
+            ctx.accounts.token_program.to_account_info(),
+            Transfer {
+                from: ctx.accounts.reserve_vault.to_account_info(),
+                to: ctx.accounts.user_usdc_account.to_account_info(),
+                authority: ctx.accounts.reserve.to_account_info(),
             },
             reserve_signer,
         ),
-        net_sol_to_user,
+        net_usdc_to_user,
     )?;
 
-    // Transfer fee from reserve PDA to treasury PDA
-    if fee_lamports > 0 {
-        system_program::transfer(
+    // Transfer fee USDC from reserve to treasury
+    if fee > 0 {
+        token::transfer(
             CpiContext::new_with_signer(
-                ctx.accounts.system_program.to_account_info(),
-                system_program::Transfer {
-                    from: ctx.accounts.reserve.to_account_info(),
-                    to: ctx.accounts.treasury.to_account_info(),
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.reserve_vault.to_account_info(),
+                    to: ctx.accounts.treasury_vault.to_account_info(),
+                    authority: ctx.accounts.reserve.to_account_info(),
                 },
                 reserve_signer,
             ),
-            fee_lamports,
+            fee,
         )?;
     }
 
     // Update config accounting
     let config = &mut ctx.accounts.config;
-    config.total_sol_reserves = config.total_sol_reserves.checked_sub(gross_sol)
+    config.total_usdc_reserves = config.total_usdc_reserves.checked_sub(gross_usdc)
         .ok_or(StablecoinError::MathOverflow)?;
     config.total_solusd_minted = config.total_solusd_minted.checked_sub(solusd_amount)
         .ok_or(StablecoinError::MathOverflow)?;
@@ -108,22 +99,37 @@ pub struct RedeemSolUsd<'info> {
     )]
     pub mint: Account<'info, Mint>,
 
-    /// CHECK: Reserve PDA holding SOL. Validated by seeds.
+    /// CHECK: PDA that owns the reserve token account
     #[account(
-        mut,
         seeds = [b"reserve"],
         bump = config.reserve_bump,
     )]
     pub reserve: UncheckedAccount<'info>,
 
-    /// CHECK: Treasury PDA for fee revenue. Validated by seeds.
+    /// Reserve USDC token account
     #[account(
         mut,
-        seeds = [b"treasury"],
-        bump = config.treasury_bump,
+        seeds = [b"reserve-vault"],
+        bump,
     )]
-    pub treasury: UncheckedAccount<'info>,
+    pub reserve_vault: Account<'info, TokenAccount>,
 
+    /// Treasury USDC token account
+    #[account(
+        mut,
+        seeds = [b"treasury-vault"],
+        bump,
+    )]
+    pub treasury_vault: Account<'info, TokenAccount>,
+
+    /// User's USDC token account (destination)
+    #[account(
+        mut,
+        constraint = user_usdc_account.mint == config.usdc_mint,
+    )]
+    pub user_usdc_account: Account<'info, TokenAccount>,
+
+    /// User's solUSD token account (source for burn)
     #[account(
         mut,
         associated_token::mint = mint,
@@ -131,9 +137,5 @@ pub struct RedeemSolUsd<'info> {
     )]
     pub user_solusd_account: Account<'info, TokenAccount>,
 
-    /// CHECK: Optional Pyth SOL/USD price feed. Validated in helper.
-    pub pyth_price_feed: Option<UncheckedAccount<'info>>,
-
     pub token_program: Program<'info, Token>,
-    pub system_program: Program<'info, System>,
 }

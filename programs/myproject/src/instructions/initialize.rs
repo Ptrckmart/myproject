@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Mint, Token};
+use anchor_spl::token::{Mint, Token, TokenAccount};
 
 use crate::state::Config;
 use crate::errors::StablecoinError;
@@ -7,18 +7,15 @@ use crate::errors::StablecoinError;
 pub fn handler(
     ctx: Context<Initialize>,
     fee_bps: u64,
-    initial_sol_price_usd: u64,
 ) -> Result<()> {
     require!(fee_bps <= 1_000, StablecoinError::FeeTooHigh);
-    require!(initial_sol_price_usd > 0, StablecoinError::InvalidOraclePrice);
 
     let config = &mut ctx.accounts.config;
     config.authority = ctx.accounts.authority.key();
     config.mint = ctx.accounts.mint.key();
-    config.pyth_sol_usd_feed = ctx.accounts.pyth_sol_usd_feed.key();
-    config.sol_price_usd = initial_sol_price_usd;
+    config.usdc_mint = ctx.accounts.usdc_mint.key();
     config.fee_bps = fee_bps;
-    config.total_sol_reserves = 0;
+    config.total_usdc_reserves = 0;
     config.total_solusd_minted = 0;
     config.bump = ctx.bumps.config;
     config.mint_authority_bump = ctx.bumps.mint_authority;
@@ -42,6 +39,7 @@ pub struct Initialize<'info> {
     )]
     pub config: Account<'info, Config>,
 
+    /// The solUSD mint (created here)
     #[account(
         init,
         payer = authority,
@@ -50,6 +48,9 @@ pub struct Initialize<'info> {
     )]
     pub mint: Account<'info, Mint>,
 
+    /// The accepted USDC mint (already exists on-chain)
+    pub usdc_mint: Account<'info, Mint>,
+
     /// CHECK: PDA used as mint authority, no data needed
     #[account(
         seeds = [b"mint-authority"],
@@ -57,22 +58,41 @@ pub struct Initialize<'info> {
     )]
     pub mint_authority: UncheckedAccount<'info>,
 
-    /// CHECK: PDA that will hold SOL reserves. Validated by seeds.
+    /// Reserve token account (USDC) owned by the reserve PDA
+    #[account(
+        init,
+        payer = authority,
+        token::mint = usdc_mint,
+        token::authority = reserve,
+        seeds = [b"reserve-vault"],
+        bump,
+    )]
+    pub reserve_vault: Account<'info, TokenAccount>,
+
+    /// CHECK: PDA that owns the reserve token account
     #[account(
         seeds = [b"reserve"],
         bump,
     )]
     pub reserve: UncheckedAccount<'info>,
 
-    /// CHECK: PDA that will hold fee revenue. Validated by seeds.
+    /// Treasury token account (USDC) owned by the treasury PDA
+    #[account(
+        init,
+        payer = authority,
+        token::mint = usdc_mint,
+        token::authority = treasury,
+        seeds = [b"treasury-vault"],
+        bump,
+    )]
+    pub treasury_vault: Account<'info, TokenAccount>,
+
+    /// CHECK: PDA that owns the treasury token account
     #[account(
         seeds = [b"treasury"],
         bump,
     )]
     pub treasury: UncheckedAccount<'info>,
-
-    /// CHECK: Pyth SOL/USD price feed account. Validated when reading prices.
-    pub pyth_sol_usd_feed: UncheckedAccount<'info>,
 
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,

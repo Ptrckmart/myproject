@@ -6,20 +6,16 @@ pub enum StablecoinError {
     ZeroAmount,
     #[msg("Math overflow")]
     MathOverflow,
-    #[msg("Oracle price is stale or unavailable")]
-    StaleOraclePrice,
-    #[msg("Oracle returned an invalid price")]
-    InvalidOraclePrice,
     #[msg("Unauthorized access")]
     UnauthorizedAccess,
     #[msg("Fee must not exceed 1000 basis points (10%)")]
     FeeTooHigh,
-    #[msg("Reserve does not have enough SOL to cover redemption")]
+    #[msg("Reserve does not have enough USDC to cover redemption")]
     InsufficientReserves,
-    #[msg("Treasury does not have enough SOL for withdrawal")]
+    #[msg("Treasury does not have enough USDC for withdrawal")]
     InsufficientTreasuryBalance,
     #[msg("Deposit too small: results in zero solUSD after fees")]
     MintAmountTooSmall,
-    #[msg("Redemption too small: results in zero SOL after fees")]
+    #[msg("Redemption too small: results in zero USDC after fees")]
     RedeemAmountTooSmall,
 }

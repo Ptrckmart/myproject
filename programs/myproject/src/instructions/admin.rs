@@ -3,18 +3,6 @@ use anchor_lang::prelude::*;
 use crate::state::Config;
 use crate::errors::StablecoinError;
 
-pub fn handle_update_price(
-    ctx: Context<UpdateConfig>,
-    new_sol_price_usd: u64,
-) -> Result<()> {
-    require!(new_sol_price_usd > 0, StablecoinError::InvalidOraclePrice);
-
-    let config = &mut ctx.accounts.config;
-    config.sol_price_usd = new_sol_price_usd;
-
-    Ok(())
-}
-
 pub fn handle_update_fee(
     ctx: Context<UpdateConfig>,
     new_fee_bps: u64,

@@ -16,16 +16,15 @@ pub mod myproject {
     pub fn initialize(
         ctx: Context<Initialize>,
         fee_bps: u64,
-        initial_sol_price_usd: u64,
     ) -> Result<()> {
-        instructions::initialize::handler(ctx, fee_bps, initial_sol_price_usd)
+        instructions::initialize::handler(ctx, fee_bps)
     }
 
     pub fn mint(
         ctx: Context<MintSolUsd>,
-        sol_amount: u64,
+        usdc_amount: u64,
     ) -> Result<()> {
-        instructions::mint::handler(ctx, sol_amount)
+        instructions::mint::handler(ctx, usdc_amount)
     }
 
     pub fn redeem(
@@ -33,13 +32,6 @@ pub mod myproject {
         solusd_amount: u64,
     ) -> Result<()> {
         instructions::redeem::handler(ctx, solusd_amount)
-    }
-
-    pub fn update_price(
-        ctx: Context<UpdateConfig>,
-        new_sol_price_usd: u64,
-    ) -> Result<()> {
-        instructions::admin::handle_update_price(ctx, new_sol_price_usd)
     }
 
     pub fn update_fee(

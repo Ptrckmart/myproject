@@ -2,709 +2,421 @@
   "address": "7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J",
   "metadata": {
     "name": "myproject",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "spec": "0.1.0"
   },
   "instructions": [
     {
       "name": "initialize",
-      "discriminator": [
-        175,
-        175,
-        109,
-        31,
-        13,
-        152,
-        155,
-        237
-      ],
+      "discriminator": [175,175,109,31,13,152,155,237],
       "accounts": [
-        {
-          "name": "authority",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "mint",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "usdcMint"
-        },
-        {
-          "name": "mintAuthority",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  105,
-                  110,
-                  116,
-                  45,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "reserveVault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  115,
-                  101,
-                  114,
-                  118,
-                  101,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "reserve",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  115,
-                  101,
-                  114,
-                  118,
-                  101
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasuryVault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasury",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "tokenProgram"
-        },
-        {
-          "name": "systemProgram"
-        },
-        {
-          "name": "rent"
-        }
+        { "name": "authority", "writable": true, "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "mint", "writable": true, "signer": true },
+        { "name": "mintAuthority", "pda": { "seeds": [{ "kind": "const", "value": [109,105,110,116,45,97,117,116,104,111,114,105,116,121] }] } },
+        { "name": "oracleConfig", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [111,114,97,99,108,101,45,99,111,110,102,105,103] }] } },
+        { "name": "treasuryVault", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [116,114,101,97,115,117,114,121,45,118,97,117,108,116] }] } },
+        { "name": "treasury", "pda": { "seeds": [{ "kind": "const", "value": [116,114,101,97,115,117,114,121] }] } },
+        { "name": "redeemEscrow", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119] }] } },
+        { "name": "redeemEscrowAuthority", "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119,45,97,117,116,104,111,114,105,116,121] }] } },
+        { "name": "tokenProgram" },
+        { "name": "systemProgram" },
+        { "name": "rent" }
       ],
       "args": [
-        {
-          "name": "feeBps",
-          "type": "u64"
-        }
+        { "name": "feeBps", "type": "u64" },
+        { "name": "mintingAuthority", "type": "pubkey" },
+        { "name": "coSigner", "type": "pubkey" },
+        { "name": "emergencyGuardian", "type": "pubkey" },
+        { "name": "perTxMintCap", "type": "u64" },
+        { "name": "dailyMintCap", "type": "u64" },
+        { "name": "maxStalenessSeconds", "type": "i64" }
       ]
     },
     {
-      "name": "mint",
-      "discriminator": [
-        51,
-        57,
-        225,
-        47,
-        182,
-        146,
-        137,
-        166
-      ],
+      "name": "mintToUser",
+      "discriminator": [75,194,44,77,10,65,232,85],
       "accounts": [
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "mint",
-          "writable": true
-        },
-        {
-          "name": "mintAuthority",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  105,
-                  110,
-                  116,
-                  45,
-                  97,
-                  117,
-                  116,
-                  104,
-                  111,
-                  114,
-                  105,
-                  116,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "reserveVault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  115,
-                  101,
-                  114,
-                  118,
-                  101,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasuryVault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "userUsdcAccount",
-          "writable": true
-        },
-        {
-          "name": "userSolusdAccount",
-          "writable": true
-        },
-        {
-          "name": "tokenProgram"
-        }
+        { "name": "mintingAuthority", "signer": true },
+        { "name": "coSigner", "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "mint", "writable": true },
+        { "name": "mintAuthority", "pda": { "seeds": [{ "kind": "const", "value": [109,105,110,116,45,97,117,116,104,111,114,105,116,121] }] } },
+        { "name": "oracleConfig", "pda": { "seeds": [{ "kind": "const", "value": [111,114,97,99,108,101,45,99,111,110,102,105,103] }] } },
+        { "name": "treasuryVault", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [116,114,101,97,115,117,114,121,45,118,97,117,108,116] }] } },
+        { "name": "userSolusdAccount", "writable": true },
+        { "name": "blacklistedAccount", "optional": true },
+        { "name": "frozenAccount", "optional": true },
+        { "name": "tokenProgram" },
+        { "name": "associatedTokenProgram" }
       ],
       "args": [
-        {
-          "name": "usdcAmount",
-          "type": "u64"
-        }
+        { "name": "userWallet", "type": "pubkey" },
+        { "name": "amount", "type": "u64" }
       ]
     },
     {
-      "name": "redeem",
-      "discriminator": [
-        184,
-        12,
-        86,
-        149,
-        70,
-        196,
-        97,
-        225
-      ],
+      "name": "initiateRedeem",
+      "discriminator": [113,45,69,78,127,25,59,111],
       "accounts": [
-        {
-          "name": "user",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "mint",
-          "writable": true
-        },
-        {
-          "name": "reserve",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  115,
-                  101,
-                  114,
-                  118,
-                  101
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "reserveVault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  101,
-                  115,
-                  101,
-                  114,
-                  118,
-                  101,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasuryVault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "userUsdcAccount",
-          "writable": true
-        },
-        {
-          "name": "userSolusdAccount",
-          "writable": true
-        },
-        {
-          "name": "tokenProgram"
-        }
+        { "name": "user", "writable": true, "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "mint" },
+        { "name": "redeemEscrow", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119] }] } },
+        { "name": "redemptionRecord", "writable": true },
+        { "name": "userSolusdAccount", "writable": true },
+        { "name": "blacklistedAccount", "optional": true },
+        { "name": "frozenAccount", "optional": true },
+        { "name": "tokenProgram" },
+        { "name": "associatedTokenProgram" },
+        { "name": "systemProgram" }
       ],
       "args": [
-        {
-          "name": "solusdAmount",
-          "type": "u64"
-        }
+        { "name": "solusdAmount", "type": "u64" },
+        { "name": "redemptionId", "type": "u64" }
+      ]
+    },
+    {
+      "name": "completeRedeem",
+      "discriminator": [234,40,26,254,202,90,42,209],
+      "accounts": [
+        { "name": "mintingAuthority", "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "mint", "writable": true },
+        { "name": "redeemEscrow", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119] }] } },
+        { "name": "redeemEscrowAuthority", "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119,45,97,117,116,104,111,114,105,116,121] }] } },
+        { "name": "redemptionRecord", "writable": true },
+        { "name": "tokenProgram" }
+      ],
+      "args": [
+        { "name": "redemptionId", "type": "u64" }
+      ]
+    },
+    {
+      "name": "cancelRedeem",
+      "discriminator": [111,76,232,50,39,175,48,242],
+      "accounts": [
+        { "name": "mintingAuthority", "signer": true },
+        { "name": "config", "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "mint" },
+        { "name": "redeemEscrow", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119] }] } },
+        { "name": "redeemEscrowAuthority", "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119,45,97,117,116,104,111,114,105,116,121] }] } },
+        { "name": "redemptionRecord", "writable": true },
+        { "name": "userSolusdAccount", "writable": true },
+        { "name": "tokenProgram" },
+        { "name": "associatedTokenProgram" }
+      ],
+      "args": [
+        { "name": "redemptionId", "type": "u64" }
+      ]
+    },
+    {
+      "name": "claimRefund",
+      "discriminator": [15,16,30,161,255,228,97,60],
+      "accounts": [
+        { "name": "user", "signer": true },
+        { "name": "config", "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "mint" },
+        { "name": "redeemEscrow", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119] }] } },
+        { "name": "redeemEscrowAuthority", "pda": { "seeds": [{ "kind": "const", "value": [114,101,100,101,101,109,45,101,115,99,114,111,119,45,97,117,116,104,111,114,105,116,121] }] } },
+        { "name": "redemptionRecord", "writable": true },
+        { "name": "userSolusdAccount", "writable": true },
+        { "name": "tokenProgram" },
+        { "name": "associatedTokenProgram" }
+      ],
+      "args": [
+        { "name": "redemptionId", "type": "u64" }
+      ]
+    },
+    {
+      "name": "updateReserves",
+      "discriminator": [239,119,156,174,192,208,234,66],
+      "accounts": [
+        { "name": "oracleAuthority", "signer": true },
+        { "name": "oracleConfig", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [111,114,97,99,108,101,45,99,111,110,102,105,103] }] } }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" }
       ]
     },
     {
       "name": "updateFee",
-      "discriminator": [
-        232,
-        253,
-        195,
-        247,
-        148,
-        212,
-        73,
-        222
-      ],
+      "discriminator": [232,253,195,247,148,212,73,222],
       "accounts": [
-        {
-          "name": "authority",
-          "signer": true
-        },
-        {
-          "name": "config",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        }
+        { "name": "authority", "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } }
       ],
       "args": [
-        {
-          "name": "newFeeBps",
-          "type": "u64"
-        }
+        { "name": "newFeeBps", "type": "u64" }
+      ]
+    },
+    {
+      "name": "updateMintCaps",
+      "discriminator": [54,46,248,202,188,45,6,136],
+      "accounts": [
+        { "name": "authority", "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } }
+      ],
+      "args": [
+        { "name": "perTxCap", "type": "u64" },
+        { "name": "dailyCap", "type": "u64" }
       ]
     },
     {
       "name": "withdrawFees",
-      "discriminator": [
-        198,
-        212,
-        171,
-        109,
-        144,
-        215,
-        174,
-        89
-      ],
+      "discriminator": [198,212,171,109,144,215,174,89],
       "accounts": [
-        {
-          "name": "authority",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "config",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  99,
-                  111,
-                  110,
-                  102,
-                  105,
-                  103
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasury",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasuryVault",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121,
-                  45,
-                  118,
-                  97,
-                  117,
-                  108,
-                  116
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "authorityUsdcAccount",
-          "writable": true
-        },
-        {
-          "name": "tokenProgram"
-        }
+        { "name": "authority", "signer": true },
+        { "name": "config", "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "treasury", "pda": { "seeds": [{ "kind": "const", "value": [116,114,101,97,115,117,114,121] }] } },
+        { "name": "treasuryVault", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [116,114,101,97,115,117,114,121,45,118,97,117,108,116] }] } },
+        { "name": "authoritySolusdAccount", "writable": true },
+        { "name": "tokenProgram" },
+        { "name": "associatedTokenProgram" }
       ],
       "args": [
-        {
-          "name": "amount",
-          "type": "u64"
-        }
+        { "name": "amount", "type": "u64" }
+      ]
+    },
+    {
+      "name": "setPaused",
+      "discriminator": [91,60,125,192,176,225,166,218],
+      "accounts": [
+        { "name": "authority", "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } }
+      ],
+      "args": [
+        { "name": "paused", "type": "bool" }
+      ]
+    },
+    {
+      "name": "emergencyPause",
+      "discriminator": [21,143,27,142,200,181,210,255],
+      "accounts": [
+        { "name": "guardian", "signer": true },
+        { "name": "config", "writable": true, "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } }
+      ],
+      "args": []
+    },
+    {
+      "name": "freezeAccount",
+      "discriminator": [253,75,82,133,167,238,43,130],
+      "accounts": [
+        { "name": "authority", "writable": true, "signer": true },
+        { "name": "config", "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "frozenAccount", "writable": true },
+        { "name": "systemProgram" }
+      ],
+      "args": [
+        { "name": "user", "type": "pubkey" }
+      ]
+    },
+    {
+      "name": "unfreezeAccount",
+      "discriminator": [28,255,156,206,139,228,5,213],
+      "accounts": [
+        { "name": "authority", "writable": true, "signer": true },
+        { "name": "config", "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "frozenAccount", "writable": true }
+      ],
+      "args": [
+        { "name": "user", "type": "pubkey" }
+      ]
+    },
+    {
+      "name": "blacklistAccount",
+      "discriminator": [9,85,251,95,90,167,154,24],
+      "accounts": [
+        { "name": "authority", "writable": true, "signer": true },
+        { "name": "config", "pda": { "seeds": [{ "kind": "const", "value": [99,111,110,102,105,103] }] } },
+        { "name": "blacklistedAccount", "writable": true },
+        { "name": "systemProgram" }
+      ],
+      "args": [
+        { "name": "user", "type": "pubkey" }
       ]
     }
   ],
   "accounts": [
     {
-      "name": "config",
-      "discriminator": [
-        155,
-        12,
-        170,
-        224,
-        30,
-        250,
-        204,
-        130
-      ]
-    }
-  ],
-  "errors": [
-    {
-      "code": 6000,
-      "name": "zeroAmount",
-      "msg": "Amount must be greater than zero"
+      "name": "Config",
+      "discriminator": [155,12,170,224,30,250,204,130]
     },
     {
-      "code": 6001,
-      "name": "mathOverflow",
-      "msg": "Math overflow"
+      "name": "OracleConfig",
+      "discriminator": [133,196,152,50,27,21,145,254]
     },
     {
-      "code": 6002,
-      "name": "unauthorizedAccess",
-      "msg": "Unauthorized access"
+      "name": "RedemptionRecord",
+      "discriminator": [225,49,176,110,91,172,28,16]
     },
     {
-      "code": 6003,
-      "name": "feeTooHigh",
-      "msg": "Fee must not exceed 1000 basis points (10%)"
+      "name": "FrozenAccount",
+      "discriminator": [158,228,34,188,28,83,228,244]
     },
     {
-      "code": 6004,
-      "name": "insufficientReserves",
-      "msg": "Reserve does not have enough USDC to cover redemption"
-    },
-    {
-      "code": 6005,
-      "name": "insufficientTreasuryBalance",
-      "msg": "Treasury does not have enough USDC for withdrawal"
-    },
-    {
-      "code": 6006,
-      "name": "mintAmountTooSmall",
-      "msg": "Deposit too small: results in zero solUSD after fees"
-    },
-    {
-      "code": 6007,
-      "name": "redeemAmountTooSmall",
-      "msg": "Redemption too small: results in zero USDC after fees"
+      "name": "BlacklistedAccount",
+      "discriminator": [21,228,71,129,41,223,10,58]
     }
   ],
   "types": [
     {
-      "name": "config",
+      "name": "Config",
       "type": {
         "kind": "struct",
         "fields": [
-          {
-            "name": "authority",
-            "type": "pubkey"
-          },
-          {
-            "name": "mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "usdcMint",
-            "type": "pubkey"
-          },
-          {
-            "name": "feeBps",
-            "type": "u64"
-          },
-          {
-            "name": "totalUsdcReserves",
-            "type": "u64"
-          },
-          {
-            "name": "totalSolusdMinted",
-            "type": "u64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          },
-          {
-            "name": "mintAuthorityBump",
-            "type": "u8"
-          },
-          {
-            "name": "reserveBump",
-            "type": "u8"
-          },
-          {
-            "name": "treasuryBump",
-            "type": "u8"
-          }
+          { "name": "authority", "type": "pubkey" },
+          { "name": "mint", "type": "pubkey" },
+          { "name": "mintingAuthority", "type": "pubkey" },
+          { "name": "coSigner", "type": "pubkey" },
+          { "name": "emergencyGuardian", "type": "pubkey" },
+          { "name": "feeBps", "type": "u64" },
+          { "name": "totalSolusdMinted", "type": "u64" },
+          { "name": "perTxMintCap", "type": "u64" },
+          { "name": "dailyMintCap", "type": "u64" },
+          { "name": "dailyMinted", "type": "u64" },
+          { "name": "dailyMintWindowStart", "type": "i64" },
+          { "name": "redemptionCounter", "type": "u64" },
+          { "name": "isPaused", "type": "bool" },
+          { "name": "bump", "type": "u8" },
+          { "name": "mintAuthorityBump", "type": "u8" },
+          { "name": "treasuryBump", "type": "u8" },
+          { "name": "oracleConfigBump", "type": "u8" },
+          { "name": "redeemEscrowBump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "OracleConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "oracleAuthority", "type": "pubkey" },
+          { "name": "totalUsdReserves", "type": "u64" },
+          { "name": "lastUpdated", "type": "i64" },
+          { "name": "maxStalenessSeconds", "type": "i64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "RedemptionRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "user", "type": "pubkey" },
+          { "name": "amount", "type": "u64" },
+          { "name": "timestamp", "type": "i64" },
+          { "name": "status", "type": { "defined": { "name": "RedemptionStatus" } } },
+          { "name": "redemptionId", "type": "u64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "FrozenAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "BlacklistedAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "RedemptionStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          { "name": "Pending" },
+          { "name": "Completed" },
+          { "name": "Failed" }
         ]
       }
     }
+  ],
+  "events": [
+    {
+      "name": "MintExecuted",
+      "discriminator": [55,135,108,73,5,190,237,44]
+    },
+    {
+      "name": "RedeemInitiated",
+      "discriminator": [71,220,146,185,11,220,245,19]
+    },
+    {
+      "name": "RedeemCompleted",
+      "discriminator": [28,209,89,218,229,197,84,47]
+    },
+    {
+      "name": "RedeemCancelled",
+      "discriminator": [209,166,7,223,49,25,200,82]
+    },
+    {
+      "name": "RefundClaimed",
+      "discriminator": [136,64,242,99,4,244,208,130]
+    },
+    {
+      "name": "ReservesUpdated",
+      "discriminator": [183,120,189,251,130,178,85,121]
+    },
+    {
+      "name": "AccountFrozen",
+      "discriminator": [221,214,59,29,246,50,119,206]
+    },
+    {
+      "name": "AccountUnfrozen",
+      "discriminator": [143,20,111,3,103,34,184,41]
+    },
+    {
+      "name": "AccountBlacklisted",
+      "discriminator": [244,167,168,252,65,254,253,193]
+    },
+    {
+      "name": "ProtocolPaused",
+      "discriminator": [35,111,245,138,237,199,79,223]
+    },
+    {
+      "name": "ProtocolUnpaused",
+      "discriminator": [248,204,112,239,72,67,127,216]
+    },
+    {
+      "name": "FeeUpdated",
+      "discriminator": [228,75,43,103,9,196,182,4]
+    },
+    {
+      "name": "MintCapsUpdated",
+      "discriminator": [146,251,131,174,19,133,194,157]
+    }
+  ],
+  "errors": [
+    { "code": 6000, "name": "ZeroAmount", "msg": "Amount must be greater than zero" },
+    { "code": 6001, "name": "MathOverflow", "msg": "Math overflow" },
+    { "code": 6002, "name": "UnauthorizedAccess", "msg": "Unauthorized access" },
+    { "code": 6003, "name": "FeeTooHigh", "msg": "Fee must not exceed 1000 basis points (10%)" },
+    { "code": 6004, "name": "InsufficientReserves", "msg": "Reserve does not have enough USDC to cover redemption" },
+    { "code": 6005, "name": "InsufficientTreasuryBalance", "msg": "Treasury does not have enough for withdrawal" },
+    { "code": 6006, "name": "MintAmountTooSmall", "msg": "Deposit too small: results in zero solUSD after fees" },
+    { "code": 6007, "name": "RedeemAmountTooSmall", "msg": "Redemption too small: results in zero USDC after fees" },
+    { "code": 6008, "name": "ProtocolPaused", "msg": "Protocol is paused" },
+    { "code": 6009, "name": "AccountFrozen", "msg": "This account is frozen" },
+    { "code": 6010, "name": "AccountBlacklisted", "msg": "This account is blacklisted" },
+    { "code": 6011, "name": "ReservesInsufficient", "msg": "Minting halted: post-mint supply would exceed reserves" },
+    { "code": 6012, "name": "InvalidOracleAuthority", "msg": "Caller is not the authorized oracle" },
+    { "code": 6013, "name": "StaleOracle", "msg": "Minting halted: oracle data exceeds max staleness threshold" },
+    { "code": 6014, "name": "UnauthorizedMinter", "msg": "Caller is not the authorized minting service" },
+    { "code": 6015, "name": "MintCapExceeded", "msg": "Mint amount exceeds per-transaction or daily cap" },
+    { "code": 6016, "name": "InvalidCoSigner", "msg": "Co-signer verification failed" },
+    { "code": 6017, "name": "RedemptionNotFound", "msg": "Redemption record does not exist" },
+    { "code": 6018, "name": "RedemptionNotPending", "msg": "Redemption is not in pending status" },
+    { "code": 6019, "name": "RedemptionTimeoutNotReached", "msg": "72h timeout has not elapsed; cannot claim refund yet" }
   ]
 }

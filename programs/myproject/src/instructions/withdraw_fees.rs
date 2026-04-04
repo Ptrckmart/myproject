@@ -14,18 +14,19 @@ pub fn handler(
         StablecoinError::InsufficientTreasuryBalance
     );
 
-    let treasury_seeds = &[b"treasury".as_ref(), &[ctx.accounts.config.treasury_bump]];
-    let treasury_signer = &[&treasury_seeds[..]];
+    let treasury_bump = ctx.accounts.config.treasury_bump;
+    let seeds = &[b"treasury".as_ref(), &[treasury_bump]];
+    let signer_seeds = &[&seeds[..]];
 
     token::transfer(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             Transfer {
                 from: ctx.accounts.treasury_vault.to_account_info(),
-                to: ctx.accounts.authority_usdc_account.to_account_info(),
+                to: ctx.accounts.authority_solusd_account.to_account_info(),
                 authority: ctx.accounts.treasury.to_account_info(),
             },
-            treasury_signer,
+            signer_seeds,
         ),
         amount,
     )?;
@@ -35,8 +36,8 @@ pub fn handler(
 
 #[derive(Accounts)]
 pub struct WithdrawFees<'info> {
+    /// Must be the Squads vault address stored in config.authority
     #[account(
-        mut,
         constraint = authority.key() == config.authority @ StablecoinError::UnauthorizedAccess,
     )]
     pub authority: Signer<'info>,
@@ -54,7 +55,7 @@ pub struct WithdrawFees<'info> {
     )]
     pub treasury: UncheckedAccount<'info>,
 
-    /// Treasury USDC token account
+    /// Treasury solUSD token account (source)
     #[account(
         mut,
         seeds = [b"treasury-vault"],
@@ -62,12 +63,14 @@ pub struct WithdrawFees<'info> {
     )]
     pub treasury_vault: Account<'info, TokenAccount>,
 
-    /// Authority's USDC token account (destination)
+    /// Authority's solUSD token account (destination)
     #[account(
         mut,
-        constraint = authority_usdc_account.mint == config.usdc_mint,
+        associated_token::mint = config.mint,
+        associated_token::authority = authority,
     )]
-    pub authority_usdc_account: Account<'info, TokenAccount>,
+    pub authority_solusd_account: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
 }

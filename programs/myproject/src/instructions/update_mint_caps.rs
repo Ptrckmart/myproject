@@ -2,26 +2,24 @@ use anchor_lang::prelude::*;
 
 use crate::state::Config;
 use crate::errors::StablecoinError;
-use crate::events::FeeUpdated;
+use crate::events::MintCapsUpdated;
 
-pub fn handle_update_fee(
-    ctx: Context<UpdateConfig>,
-    new_fee_bps: u64,
+pub fn handler(
+    ctx: Context<UpdateMintCaps>,
+    per_tx_cap: u64,
+    daily_cap: u64,
 ) -> Result<()> {
-    require!(new_fee_bps <= 1_000, StablecoinError::FeeTooHigh);
-
     let config = &mut ctx.accounts.config;
-    let old_fee_bps = config.fee_bps;
-    config.fee_bps = new_fee_bps;
+    config.per_tx_mint_cap = per_tx_cap;
+    config.daily_mint_cap = daily_cap;
 
-    emit!(FeeUpdated { old_fee_bps, new_fee_bps });
+    emit!(MintCapsUpdated { per_tx_cap, daily_cap });
 
     Ok(())
 }
 
 #[derive(Accounts)]
-pub struct UpdateConfig<'info> {
-    /// Must be the Squads vault address stored in config.authority
+pub struct UpdateMintCaps<'info> {
     #[account(
         constraint = authority.key() == config.authority @ StablecoinError::UnauthorizedAccess,
     )]

@@ -1,88 +1,75 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
-use crate::state::Config;
+use crate::state::{Config, RedemptionRecord, RedemptionStatus, BlacklistedAccount, FrozenAccount};
 use crate::errors::StablecoinError;
 use crate::helpers;
+use crate::events::RedeemInitiated;
 
 pub fn handler(
-    ctx: Context<RedeemSolUsd>,
+    ctx: Context<InitiateRedeem>,
     solusd_amount: u64,
+    redemption_id: u64,
 ) -> Result<()> {
-    require!(solusd_amount > 0, StablecoinError::ZeroAmount);
-
     let config = &ctx.accounts.config;
 
-    // 1:1 conversion: solusd_amount == gross USDC
-    let gross_usdc = solusd_amount;
-    let fee = helpers::calculate_fee(gross_usdc, config.fee_bps)?;
-    let net_usdc_to_user = gross_usdc.checked_sub(fee)
-        .ok_or(StablecoinError::MathOverflow)?;
-
-    require!(net_usdc_to_user > 0, StablecoinError::RedeemAmountTooSmall);
+    require!(!config.is_paused, StablecoinError::ProtocolPaused);
     require!(
-        gross_usdc <= config.total_usdc_reserves,
-        StablecoinError::InsufficientReserves
+        ctx.accounts.blacklisted_account.is_none(),
+        StablecoinError::AccountBlacklisted
     );
+    require!(
+        ctx.accounts.frozen_account.is_none(),
+        StablecoinError::AccountFrozen
+    );
+    require!(solusd_amount > 0, StablecoinError::ZeroAmount);
 
-    // Burn solUSD from user's token account
-    token::burn(
+    let fee = helpers::calculate_fee(solusd_amount, config.fee_bps)?;
+    let net_usdc = solusd_amount.checked_sub(fee).ok_or(StablecoinError::MathOverflow)?;
+    require!(net_usdc > 0, StablecoinError::RedeemAmountTooSmall);
+
+    // Transfer solUSD from user to redeem escrow (do NOT burn yet)
+    token::transfer(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
-            Burn {
-                mint: ctx.accounts.mint.to_account_info(),
+            Transfer {
                 from: ctx.accounts.user_solusd_account.to_account_info(),
+                to: ctx.accounts.redeem_escrow.to_account_info(),
                 authority: ctx.accounts.user.to_account_info(),
             },
         ),
         solusd_amount,
     )?;
 
-    // Transfer net USDC from reserve to user
-    let reserve_seeds = &[b"reserve".as_ref(), &[config.reserve_bump]];
-    let reserve_signer = &[&reserve_seeds[..]];
+    // Init redemption record
+    let record = &mut ctx.accounts.redemption_record;
+    let clock = Clock::get()?;
+    record.user = ctx.accounts.user.key();
+    record.amount = solusd_amount;
+    record.timestamp = clock.unix_timestamp;
+    record.status = RedemptionStatus::Pending;
+    record.redemption_id = redemption_id;
+    record.bump = ctx.bumps.redemption_record;
 
-    token::transfer(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            Transfer {
-                from: ctx.accounts.reserve_vault.to_account_info(),
-                to: ctx.accounts.user_usdc_account.to_account_info(),
-                authority: ctx.accounts.reserve.to_account_info(),
-            },
-            reserve_signer,
-        ),
-        net_usdc_to_user,
-    )?;
-
-    // Transfer fee USDC from reserve to treasury
-    if fee > 0 {
-        token::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                Transfer {
-                    from: ctx.accounts.reserve_vault.to_account_info(),
-                    to: ctx.accounts.treasury_vault.to_account_info(),
-                    authority: ctx.accounts.reserve.to_account_info(),
-                },
-                reserve_signer,
-            ),
-            fee,
-        )?;
-    }
-
-    // Update config accounting
+    // Increment counter
     let config = &mut ctx.accounts.config;
-    config.total_usdc_reserves = config.total_usdc_reserves.checked_sub(gross_usdc)
+    config.redemption_counter = config.redemption_counter
+        .checked_add(1)
         .ok_or(StablecoinError::MathOverflow)?;
-    config.total_solusd_minted = config.total_solusd_minted.checked_sub(solusd_amount)
-        .ok_or(StablecoinError::MathOverflow)?;
+
+    emit!(RedeemInitiated {
+        user: ctx.accounts.user.key(),
+        amount: solusd_amount,
+        redemption_id,
+        timestamp: clock.unix_timestamp,
+    });
 
     Ok(())
 }
 
 #[derive(Accounts)]
-pub struct RedeemSolUsd<'info> {
+#[instruction(solusd_amount: u64, redemption_id: u64)]
+pub struct InitiateRedeem<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
 
@@ -93,43 +80,28 @@ pub struct RedeemSolUsd<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    #[account(
-        mut,
-        address = config.mint,
-    )]
+    #[account(address = config.mint)]
     pub mint: Account<'info, Mint>,
 
-    /// CHECK: PDA that owns the reserve token account
-    #[account(
-        seeds = [b"reserve"],
-        bump = config.reserve_bump,
-    )]
-    pub reserve: UncheckedAccount<'info>,
-
-    /// Reserve USDC token account
+    /// Redeem escrow holds solUSD during pending redemption
     #[account(
         mut,
-        seeds = [b"reserve-vault"],
+        seeds = [b"redeem-escrow"],
+        bump = config.redeem_escrow_bump,
+    )]
+    pub redeem_escrow: Account<'info, TokenAccount>,
+
+    /// Created here; tracks this redemption's status
+    #[account(
+        init,
+        payer = user,
+        space = RedemptionRecord::LEN,
+        seeds = [b"redemption", user.key().as_ref(), &redemption_id.to_le_bytes()],
         bump,
     )]
-    pub reserve_vault: Account<'info, TokenAccount>,
+    pub redemption_record: Account<'info, RedemptionRecord>,
 
-    /// Treasury USDC token account
-    #[account(
-        mut,
-        seeds = [b"treasury-vault"],
-        bump,
-    )]
-    pub treasury_vault: Account<'info, TokenAccount>,
-
-    /// User's USDC token account (destination)
-    #[account(
-        mut,
-        constraint = user_usdc_account.mint == config.usdc_mint,
-    )]
-    pub user_usdc_account: Account<'info, TokenAccount>,
-
-    /// User's solUSD token account (source for burn)
+    /// User's solUSD account (source)
     #[account(
         mut,
         associated_token::mint = mint,
@@ -137,5 +109,21 @@ pub struct RedeemSolUsd<'info> {
     )]
     pub user_solusd_account: Account<'info, TokenAccount>,
 
+    /// Blacklist check
+    #[account(
+        seeds = [b"blacklisted", user.key().as_ref()],
+        bump,
+    )]
+    pub blacklisted_account: Option<Account<'info, BlacklistedAccount>>,
+
+    /// Frozen check
+    #[account(
+        seeds = [b"frozen", user.key().as_ref()],
+        bump,
+    )]
+    pub frozen_account: Option<Account<'info, FrozenAccount>>,
+
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, anchor_spl::associated_token::AssociatedToken>,
+    pub system_program: Program<'info, System>,
 }

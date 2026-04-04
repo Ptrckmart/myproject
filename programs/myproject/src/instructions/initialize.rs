@@ -8,13 +8,14 @@ pub fn handler(
     ctx: Context<Initialize>,
     fee_bps: u64,
     minting_authority: Pubkey,
-    co_signer: Pubkey,
-    emergency_guardian: Pubkey,
     per_tx_mint_cap: u64,
     daily_mint_cap: u64,
     max_staleness_seconds: i64,
 ) -> Result<()> {
     require!(fee_bps <= 1_000, StablecoinError::FeeTooHigh);
+
+    let co_signer = ctx.accounts.co_signer.key();
+    let emergency_guardian = ctx.accounts.emergency_guardian.key();
 
     let config = &mut ctx.accounts.config;
     config.authority = ctx.accounts.authority.key();
@@ -122,7 +123,12 @@ pub struct Initialize<'info> {
     )]
     pub redeem_escrow_authority: UncheckedAccount<'info>,
 
+    /// CHECK: Co-signer key for dual-sig minting (passed as account to avoid Borsh corruption)
+    pub co_signer: UncheckedAccount<'info>,
+
+    /// CHECK: Emergency guardian key (passed as account to avoid Borsh corruption)
+    pub emergency_guardian: UncheckedAccount<'info>,
+
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
-    pub rent: Sysvar<'info, Rent>,
 }

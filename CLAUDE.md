@@ -278,3 +278,46 @@ programs/myproject/src/
 - Fee math: `fee = amount * fee_bps / 10_000` using u128 intermediate to avoid overflow
 - Both solUSD uses 6 decimal places (matches USDC convention)
 - Emit Anchor events for all state changes — the off-chain API depends on these
+
+---
+
+## Open To-Dos (Test Suite Debugging)
+
+Current state: **14/29 tests passing**. The v2 on-chain program is complete and builds. Remaining failures are all in the test layer.
+
+### Bug 1 — `initialize` arg corruption (test 1.1)
+
+**Symptom:** `config.mintingAuthority` is stored with wrong bytes on-chain after a successful `initialize` call.
+
+**Root cause:** Anchor 0.30.1 BPF memory corruption. During `try_accounts` execution, some internal Solana/Anchor code (likely `Rent::default()` struct construction) overwrites a region of BPF memory that overlaps with deserialized instruction args. The corruption zone is approximately arg bytes 56–103 (relative to start of arg data, not including 8-byte discriminator).
+
+**Partial fix applied:** Moved `co_signer` and `emergency_guardian` from instruction args to `UncheckedAccount<'info>` entries in the `Initialize` accounts struct (they are read via `ctx.accounts.co_signer.key()` in the handler). This was the right approach but the corruption zone shifted to affect `mintingAuthority` (arg bytes 8–39) in the new layout. Need to re-diagnose the exact corruption range with the new 5-arg layout and potentially move `mintingAuthority` to accounts as well, or restructure arg order.
+
+**Files changed so far:** `initialize.rs`, `lib.rs`, `target/idl/myproject.json`, `target/types/myproject.ts`, `tests/myproject.ts`
+
+### Bug 2 — Optional accounts not supported by `validateAccounts` (tests 3.x)
+
+**Symptom:** All `mintToUser` calls fail with `Error: Account 'blacklistedAccount' not provided.`
+
+**Root cause:** Anchor 0.30.1 `validateAccounts` in `node_modules/@coral-xyz/anchor/src/program/common.ts` does NOT check the `optional` flag — it requires every IDL account to be provided.
+
+**Fix needed:** In every `.accounts({...})` call for `mintToUser`, pass `program.programId` as a sentinel value for unused optional accounts:
+```typescript
+frozenAccount: program.programId,    // not frozen
+blacklistedAccount: program.programId, // not blacklisted
+```
+This applies to test sections 3, 4, and 5 `before` hooks and individual test cases.
+
+### Bug 3 — `authorityAtaSolusd` undefined (tests 7.5, 7.6)
+
+**Symptom:** `withdraw_fees` tests fail because `authorityAtaSolusd` is `undefined`.
+
+**Root cause:** The ATA creation is inside test 1.1, after the failing assertion at line 144. Since 1.1 throws, the ATA is never created and the variable stays `undefined`.
+
+**Fix needed:** Move the `authorityAtaSolusd` creation block out of test 1.1 and into the top-level `before` hook (or into a dedicated `before` hook in section 7). The ATA creation only works after the mint exists, so it must run after `initialize` succeeds.
+
+### Downstream failures (auto-fix once bugs 1–3 are resolved)
+
+- Tests 2.1, 3.7 — `InvalidOracleAuthority` because `oracle.oracle_authority` was stored from the corrupted `mintingAuthority` arg
+- Tests 4.x, 5.x — fail in `before all` hook because minting never succeeded
+- Test 6.4 — `emergency_pause` — was fixed in last run (passes now)

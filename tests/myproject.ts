@@ -1,5 +1,5 @@
 import * as anchor from "@coral-xyz/anchor";
-import { Program } from "@coral-xyz/anchor";
+import { Program, BN } from "@coral-xyz/anchor";
 import { Myproject } from "../target/types/myproject";
 import {
   Keypair,
@@ -9,533 +9,1057 @@ import {
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
-  createMint,
-  mintTo,
   getAccount,
 } from "@solana/spl-token";
 import { assert } from "chai";
 
-describe("solUSD USDC-Backed Stablecoin", () => {
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+async function expectError(promise: Promise<any>, code: string | number) {
+  try {
+    await promise;
+    assert.fail(`Expected error ${code} but instruction succeeded`);
+  } catch (err: any) {
+    const msg = err.toString();
+    const matched =
+      msg.includes(code.toString()) ||
+      (typeof code === "string" && msg.includes(code));
+    assert.ok(matched, `Expected error ${code}, got: ${msg}`);
+  }
+}
+
+async function airdrop(connection: anchor.web3.Connection, pubkey: PublicKey, sol = 2) {
+  const sig = await connection.requestAirdrop(pubkey, sol * LAMPORTS_PER_SOL);
+  await connection.confirmTransaction(sig);
+}
+
+async function createATA(
+  provider: anchor.AnchorProvider,
+  payer: Keypair,
+  mint: PublicKey,
+  owner: PublicKey
+): Promise<PublicKey> {
+  const ata = await getAssociatedTokenAddress(mint, owner);
+  const ix = createAssociatedTokenAccountInstruction(payer.publicKey, ata, owner, mint);
+  const tx = new anchor.web3.Transaction().add(ix);
+  tx.feePayer = payer.publicKey;
+  tx.recentBlockhash = (await provider.connection.getLatestBlockhash()).blockhash;
+  tx.sign(payer);
+  await provider.connection.sendRawTransaction(tx.serialize());
+  await provider.connection.confirmTransaction(
+    await provider.connection.sendRawTransaction(tx.serialize()).catch(() =>
+      provider.sendAndConfirm(new anchor.web3.Transaction().add(ix))
+    )
+  ).catch(async () => {
+    await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
+  });
+  return ata;
+}
+
+// ─── constants ────────────────────────────────────────────────────────────────
+
+const ONE = 1_000_000; // 1 solUSD / 1 USDC (6 decimals)
+const FEE_BPS = new BN(30); // 0.30%
+const PER_TX_CAP = new BN(1_000_000 * ONE); // 1M solUSD
+const DAILY_CAP = new BN(10_000_000 * ONE); // 10M solUSD
+const MAX_STALENESS = new BN(86400); // 24h
+
+// ─── suite ────────────────────────────────────────────────────────────────────
+
+describe("solUSD v2", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
-
   const program = anchor.workspace.Myproject as Program<Myproject>;
-  const authority = provider.wallet;
-  const payer = (authority as any).payer as Keypair;
+  const payer = (provider.wallet as any).payer as Keypair;
 
+  // Key roles
   const mintKeypair = Keypair.generate();
+  const mintingAuthority = Keypair.generate();
+  const coSigner = Keypair.generate();
+  const emergencyGuardian = Keypair.generate();
+  const oracleAuthority = mintingAuthority; // oracle uses same key for simplicity
+
+  // PDAs
   let configPda: PublicKey;
   let mintAuthorityPda: PublicKey;
-  let reservePda: PublicKey;
+  let oracleConfigPda: PublicKey;
   let treasuryPda: PublicKey;
-  let reserveVaultPda: PublicKey;
   let treasuryVaultPda: PublicKey;
+  let redeemEscrowPda: PublicKey;
+  let redeemEscrowAuthorityPda: PublicKey;
 
-  // USDC mint (fake for testing)
-  let usdcMint: PublicKey;
-  let authorityUsdcAccount: PublicKey;
-  let authoritySolusdAccount: PublicKey;
-
-  // Protocol parameters
-  const feeBps = new anchor.BN(30); // 0.30%
-  const USDC_DECIMALS = 6;
-  const ONE_USDC = 1_000_000; // 10^6
+  // User accounts
+  let authorityAtaSolusd: PublicKey;
 
   before(async () => {
-    // Derive PDAs
-    [configPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("config")],
-      program.programId
-    );
-    [mintAuthorityPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("mint-authority")],
-      program.programId
-    );
-    [reservePda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("reserve")],
-      program.programId
-    );
-    [treasuryPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("treasury")],
-      program.programId
-    );
-    [reserveVaultPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("reserve-vault")],
-      program.programId
-    );
-    [treasuryVaultPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("treasury-vault")],
-      program.programId
-    );
+    await airdrop(provider.connection, mintingAuthority.publicKey, 5);
+    await airdrop(provider.connection, coSigner.publicKey, 2);
+    await airdrop(provider.connection, emergencyGuardian.publicKey, 2);
 
-    // Create a fake USDC mint on localnet (authority = provider wallet)
-    usdcMint = await createMint(
-      provider.connection,
-      payer,
-      authority.publicKey, // mint authority
-      null,                // freeze authority
-      USDC_DECIMALS
-    );
-
-    // Create authority's USDC token account
-    authorityUsdcAccount = await getAssociatedTokenAddress(
-      usdcMint,
-      authority.publicKey
-    );
-    const createUsdcAtaIx = createAssociatedTokenAccountInstruction(
-      authority.publicKey,
-      authorityUsdcAccount,
-      authority.publicKey,
-      usdcMint
-    );
-    await provider.sendAndConfirm(
-      new anchor.web3.Transaction().add(createUsdcAtaIx)
-    );
-
-    // Mint 10,000 USDC to authority
-    await mintTo(
-      provider.connection,
-      payer,
-      usdcMint,
-      authorityUsdcAccount,
-      authority.publicKey, // mint authority
-      10_000 * ONE_USDC
-    );
-
-    // Derive authority's solUSD ATA (created later after mint is initialized)
-    authoritySolusdAccount = await getAssociatedTokenAddress(
-      mintKeypair.publicKey,
-      authority.publicKey
-    );
+    [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], program.programId);
+    [mintAuthorityPda] = PublicKey.findProgramAddressSync([Buffer.from("mint-authority")], program.programId);
+    [oracleConfigPda] = PublicKey.findProgramAddressSync([Buffer.from("oracle-config")], program.programId);
+    [treasuryPda] = PublicKey.findProgramAddressSync([Buffer.from("treasury")], program.programId);
+    [treasuryVaultPda] = PublicKey.findProgramAddressSync([Buffer.from("treasury-vault")], program.programId);
+    [redeemEscrowPda] = PublicKey.findProgramAddressSync([Buffer.from("redeem-escrow")], program.programId);
+    [redeemEscrowAuthorityPda] = PublicKey.findProgramAddressSync([Buffer.from("redeem-escrow-authority")], program.programId);
   });
 
-  it("Initializes the protocol", async () => {
-    const tx = await program.methods
-      .initialize(feeBps)
-      .accounts({
-        authority: authority.publicKey,
-        config: configPda,
-        mint: mintKeypair.publicKey,
-        usdcMint: usdcMint,
-        mintAuthority: mintAuthorityPda,
-        reserveVault: reserveVaultPda,
-        reserve: reservePda,
-        treasuryVault: treasuryVaultPda,
-        treasury: treasuryPda,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-        rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-      })
-      .signers([mintKeypair])
-      .rpc();
+  // ── 1. Initialization ────────────────────────────────────────────────────
 
-    console.log("Initialize tx:", tx);
-
-    const config = await program.account.config.fetch(configPda);
-    assert.equal(config.authority.toBase58(), authority.publicKey.toBase58());
-    assert.equal(config.mint.toBase58(), mintKeypair.publicKey.toBase58());
-    assert.equal(config.usdcMint.toBase58(), usdcMint.toBase58());
-    assert.equal(config.feeBps.toNumber(), 30);
-    assert.equal(config.totalUsdcReserves.toNumber(), 0);
-    assert.equal(config.totalSolusdMinted.toNumber(), 0);
-  });
-
-  it("Mints solUSD by depositing USDC", async () => {
-    // Create authority's solUSD ATA
-    const createSolusdAtaIx = createAssociatedTokenAccountInstruction(
-      authority.publicKey,
-      authoritySolusdAccount,
-      authority.publicKey,
-      mintKeypair.publicKey
-    );
-    await provider.sendAndConfirm(
-      new anchor.web3.Transaction().add(createSolusdAtaIx)
-    );
-
-    const usdcAmount = new anchor.BN(100 * ONE_USDC); // 100 USDC
-
-    // Expected: fee = 100_000_000 * 30 / 10_000 = 300_000 (0.30 USDC)
-    // net_usdc = 100_000_000 - 300_000 = 99_700_000
-    // solusd_minted = 99_700_000 (1:1)
-    const expectedFee = 300_000;
-    const expectedNetUsdc = 99_700_000;
-    const expectedSolusd = 99_700_000;
-
-    const treasuryBefore = Number(
-      (await getAccount(provider.connection, treasuryVaultPda)).amount
-    );
-
-    const tx = await program.methods
-      .mint(usdcAmount)
-      .accounts({
-        user: authority.publicKey,
-        config: configPda,
-        mint: mintKeypair.publicKey,
-        mintAuthority: mintAuthorityPda,
-        reserveVault: reserveVaultPda,
-        treasuryVault: treasuryVaultPda,
-        userUsdcAccount: authorityUsdcAccount,
-        userSolusdAccount: authoritySolusdAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .rpc();
-
-    console.log("Mint tx:", tx);
-
-    // Verify config accounting
-    const config = await program.account.config.fetch(configPda);
-    assert.equal(config.totalUsdcReserves.toNumber(), expectedNetUsdc);
-    assert.equal(config.totalSolusdMinted.toNumber(), expectedSolusd);
-
-    // Verify treasury received fees
-    const treasuryAfter = Number(
-      (await getAccount(provider.connection, treasuryVaultPda)).amount
-    );
-    assert.equal(treasuryAfter - treasuryBefore, expectedFee);
-
-    // Verify user received solUSD
-    const solusdBalance = Number(
-      (await getAccount(provider.connection, authoritySolusdAccount)).amount
-    );
-    assert.equal(solusdBalance, expectedSolusd);
-  });
-
-  it("Mints for a second user", async () => {
-    const secondUser = Keypair.generate();
-    const airdropSig = await provider.connection.requestAirdrop(
-      secondUser.publicKey,
-      5 * LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction(airdropSig);
-
-    // Create second user's USDC ATA
-    const secondUserUsdcAta = await getAssociatedTokenAddress(
-      usdcMint,
-      secondUser.publicKey
-    );
-    const createUsdcAtaIx = createAssociatedTokenAccountInstruction(
-      secondUser.publicKey,
-      secondUserUsdcAta,
-      secondUser.publicKey,
-      usdcMint
-    );
-    const createUsdcTx = new anchor.web3.Transaction().add(createUsdcAtaIx);
-    createUsdcTx.feePayer = secondUser.publicKey;
-    createUsdcTx.recentBlockhash = (
-      await provider.connection.getLatestBlockhash()
-    ).blockhash;
-    createUsdcTx.sign(secondUser);
-    const usdcAtaSig = await provider.connection.sendRawTransaction(
-      createUsdcTx.serialize()
-    );
-    await provider.connection.confirmTransaction(usdcAtaSig);
-
-    // Mint 5,000 USDC to second user (authority is USDC mint authority)
-    await mintTo(
-      provider.connection,
-      payer,
-      usdcMint,
-      secondUserUsdcAta,
-      authority.publicKey,
-      5_000 * ONE_USDC
-    );
-
-    // Create second user's solUSD ATA
-    const secondUserSolusdAta = await getAssociatedTokenAddress(
-      mintKeypair.publicKey,
-      secondUser.publicKey
-    );
-    const createSolusdAtaIx = createAssociatedTokenAccountInstruction(
-      secondUser.publicKey,
-      secondUserSolusdAta,
-      secondUser.publicKey,
-      mintKeypair.publicKey
-    );
-    const createSolusdTx = new anchor.web3.Transaction().add(
-      createSolusdAtaIx
-    );
-    createSolusdTx.feePayer = secondUser.publicKey;
-    createSolusdTx.recentBlockhash = (
-      await provider.connection.getLatestBlockhash()
-    ).blockhash;
-    createSolusdTx.sign(secondUser);
-    const solusdAtaSig = await provider.connection.sendRawTransaction(
-      createSolusdTx.serialize()
-    );
-    await provider.connection.confirmTransaction(solusdAtaSig);
-
-    const usdcAmount = new anchor.BN(200 * ONE_USDC); // 200 USDC
-
-    // Expected: fee = 200_000_000 * 30 / 10_000 = 600_000
-    // net_usdc = 200_000_000 - 600_000 = 199_400_000
-    const expectedNetUsdc = 199_400_000;
-
-    await program.methods
-      .mint(usdcAmount)
-      .accounts({
-        user: secondUser.publicKey,
-        config: configPda,
-        mint: mintKeypair.publicKey,
-        mintAuthority: mintAuthorityPda,
-        reserveVault: reserveVaultPda,
-        treasuryVault: treasuryVaultPda,
-        userUsdcAccount: secondUserUsdcAta,
-        userSolusdAccount: secondUserSolusdAta,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([secondUser])
-      .rpc();
-
-    // Verify additive accounting
-    const config = await program.account.config.fetch(configPda);
-    assert.equal(
-      config.totalUsdcReserves.toNumber(),
-      99_700_000 + expectedNetUsdc
-    );
-    assert.equal(
-      config.totalSolusdMinted.toNumber(),
-      99_700_000 + expectedNetUsdc
-    );
-  });
-
-  it("Redeems solUSD for USDC", async () => {
-    const solusdAmount = new anchor.BN(50 * ONE_USDC); // 50 solUSD
-
-    // Expected: gross_usdc = 50_000_000 (1:1)
-    // fee = 50_000_000 * 30 / 10_000 = 150_000
-    // net_usdc_to_user = 50_000_000 - 150_000 = 49_850_000
-    const expectedGrossUsdc = 50_000_000;
-
-    const configBefore = await program.account.config.fetch(configPda);
-    const reservesBefore = configBefore.totalUsdcReserves.toNumber();
-    const mintedBefore = configBefore.totalSolusdMinted.toNumber();
-
-    const userUsdcBefore = Number(
-      (await getAccount(provider.connection, authorityUsdcAccount)).amount
-    );
-
-    const tx = await program.methods
-      .redeem(solusdAmount)
-      .accounts({
-        user: authority.publicKey,
-        config: configPda,
-        mint: mintKeypair.publicKey,
-        reserve: reservePda,
-        reserveVault: reserveVaultPda,
-        treasuryVault: treasuryVaultPda,
-        userUsdcAccount: authorityUsdcAccount,
-        userSolusdAccount: authoritySolusdAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .rpc();
-
-    console.log("Redeem tx:", tx);
-
-    const config = await program.account.config.fetch(configPda);
-    assert.equal(
-      config.totalUsdcReserves.toNumber(),
-      reservesBefore - expectedGrossUsdc
-    );
-    assert.equal(
-      config.totalSolusdMinted.toNumber(),
-      mintedBefore - 50_000_000
-    );
-
-    // Verify user received net USDC (49.85 USDC)
-    const userUsdcAfter = Number(
-      (await getAccount(provider.connection, authorityUsdcAccount)).amount
-    );
-    assert.equal(userUsdcAfter - userUsdcBefore, 49_850_000);
-  });
-
-  it("Fails to mint with zero amount", async () => {
-    try {
+  describe("1. Initialization", () => {
+    it("1.1 Initializes successfully", async () => {
       await program.methods
-        .mint(new anchor.BN(0))
+        .initialize(
+          FEE_BPS,
+          mintingAuthority.publicKey,
+          PER_TX_CAP,
+          DAILY_CAP,
+          MAX_STALENESS,
+        )
         .accounts({
-          user: authority.publicKey,
+          authority: provider.wallet.publicKey,
           config: configPda,
           mint: mintKeypair.publicKey,
           mintAuthority: mintAuthorityPda,
-          reserveVault: reserveVaultPda,
+          oracleConfig: oracleConfigPda,
           treasuryVault: treasuryVaultPda,
-          userUsdcAccount: authorityUsdcAccount,
-          userSolusdAccount: authoritySolusdAccount,
+          treasury: treasuryPda,
+          redeemEscrow: redeemEscrowPda,
+          redeemEscrowAuthority: redeemEscrowAuthorityPda,
+          coSigner: coSigner.publicKey,
+          emergencyGuardian: emergencyGuardian.publicKey,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([mintKeypair])
+        .rpc();
+
+      const config = await program.account.config.fetch(configPda);
+      assert.equal(config.authority.toBase58(), provider.wallet.publicKey.toBase58());
+      assert.equal(config.mint.toBase58(), mintKeypair.publicKey.toBase58());
+      assert.equal(config.mintingAuthority.toBase58(), mintingAuthority.publicKey.toBase58());
+      assert.equal(config.coSigner.toBase58(), coSigner.publicKey.toBase58());
+      assert.equal(config.emergencyGuardian.toBase58(), emergencyGuardian.publicKey.toBase58());
+      assert.equal(config.feeBps.toNumber(), 30);
+      assert.equal(config.totalSolusdMinted.toNumber(), 0);
+      assert.equal(config.isPaused, false);
+      assert.equal(config.redemptionCounter.toNumber(), 0);
+
+      const oracle = await program.account.oracleConfig.fetch(oracleConfigPda);
+      assert.equal(oracle.oracleAuthority.toBase58(), mintingAuthority.publicKey.toBase58());
+      assert.equal(oracle.totalUsdReserves.toNumber(), 0);
+      assert.equal(oracle.maxStalenessSeconds.toNumber(), 86400);
+
+      // Create authority solUSD ATA for fee withdrawal tests
+      authorityAtaSolusd = await getAssociatedTokenAddress(mintKeypair.publicKey, provider.wallet.publicKey);
+      const ix = createAssociatedTokenAccountInstruction(
+        payer.publicKey, authorityAtaSolusd, provider.wallet.publicKey, mintKeypair.publicKey
+      );
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
+    });
+
+    it("1.2 Rejects fee above maximum", async () => {
+      // Config already initialized — expect "already in use" error
+      const badMint = Keypair.generate();
+      await expectError(
+        program.methods
+          .initialize(
+            new BN(1001),
+            mintingAuthority.publicKey,
+            PER_TX_CAP,
+            DAILY_CAP,
+            MAX_STALENESS,
+          )
+          .accounts({
+            authority: provider.wallet.publicKey,
+            config: configPda,
+            mint: badMint.publicKey,
+            mintAuthority: mintAuthorityPda,
+            oracleConfig: oracleConfigPda,
+            treasuryVault: treasuryVaultPda,
+            treasury: treasuryPda,
+            redeemEscrow: redeemEscrowPda,
+            redeemEscrowAuthority: redeemEscrowAuthorityPda,
+            coSigner: coSigner.publicKey,
+            emergencyGuardian: emergencyGuardian.publicKey,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([badMint])
+          .rpc(),
+        "already in use"
+      );
+    });
+  });
+
+  // ── 2. Oracle ────────────────────────────────────────────────────────────
+
+  describe("2. Oracle", () => {
+    it("2.1 Updates reserves successfully", async () => {
+      const amount = new BN(100_000 * ONE);
+      await program.methods
+        .updateReserves(amount)
+        .accounts({
+          oracleAuthority: oracleAuthority.publicKey,
+          oracleConfig: oracleConfigPda,
+        })
+        .signers([oracleAuthority])
+        .rpc();
+
+      const oracle = await program.account.oracleConfig.fetch(oracleConfigPda);
+      assert.equal(oracle.totalUsdReserves.toNumber(), amount.toNumber());
+      const now = Math.floor(Date.now() / 1000);
+      assert.approximately(oracle.lastUpdated.toNumber(), now, 10);
+    });
+
+    it("2.2 Rejects non-oracle caller", async () => {
+      const rando = Keypair.generate();
+      await airdrop(provider.connection, rando.publicKey);
+      await expectError(
+        program.methods
+          .updateReserves(new BN(100_000 * ONE))
+          .accounts({ oracleAuthority: rando.publicKey, oracleConfig: oracleConfigPda })
+          .signers([rando])
+          .rpc(),
+        "InvalidOracleAuthority"
+      );
+    });
+  });
+
+  // ── 3. Mint ───────────────────────────────────────────────────────────────
+
+  describe("3. Mint (mint_to_user)", () => {
+    let userKeypair: Keypair;
+    let userAtaSolusd: PublicKey;
+
+    before(async () => {
+      userKeypair = Keypair.generate();
+      await airdrop(provider.connection, userKeypair.publicKey, 2);
+      userAtaSolusd = await getAssociatedTokenAddress(mintKeypair.publicKey, userKeypair.publicKey);
+      const ix = createAssociatedTokenAccountInstruction(
+        userKeypair.publicKey, userAtaSolusd, userKeypair.publicKey, mintKeypair.publicKey
+      );
+      const tx = new anchor.web3.Transaction().add(ix);
+      tx.feePayer = userKeypair.publicKey;
+      tx.recentBlockhash = (await provider.connection.getLatestBlockhash()).blockhash;
+      tx.sign(userKeypair);
+      await provider.connection.sendRawTransaction(tx.serialize());
+      await provider.connection.confirmTransaction(
+        (await provider.connection.getLatestBlockhash()).blockhash
+      ).catch(() => {});
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix)).catch(() => {});
+    });
+
+    const mintAccounts = (userWallet: PublicKey, userAta: PublicKey, extra?: {
+      blacklistedAccount?: PublicKey | null,
+      frozenAccount?: PublicKey | null,
+    }) => ({
+      mintingAuthority: mintingAuthority.publicKey,
+      coSigner: coSigner.publicKey,
+      config: configPda,
+      mint: mintKeypair.publicKey,
+      mintAuthority: mintAuthorityPda,
+      oracleConfig: oracleConfigPda,
+      treasuryVault: treasuryVaultPda,
+      userSolusdAccount: userAta,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      ...(extra ?? {}),
+    });
+
+    it("3.1 Mints successfully with dual signature", async () => {
+      const amount = new BN(100 * ONE);
+      const treasuryBefore = Number((await getAccount(provider.connection, treasuryVaultPda)).amount);
+
+      await program.methods
+        .mintToUser(userKeypair.publicKey, amount)
+        .accounts(mintAccounts(userKeypair.publicKey, userAtaSolusd))
+        .signers([mintingAuthority, coSigner])
+        .rpc();
+
+      const fee = Math.floor(100 * ONE * 30 / 10_000); // 30,000
+      const netAmount = 100 * ONE - fee; // 99,970,000
+
+      const userBal = Number((await getAccount(provider.connection, userAtaSolusd)).amount);
+      assert.equal(userBal, netAmount);
+
+      const treasuryAfter = Number((await getAccount(provider.connection, treasuryVaultPda)).amount);
+      assert.equal(treasuryAfter - treasuryBefore, fee);
+
+      const config = await program.account.config.fetch(configPda);
+      assert.equal(config.totalSolusdMinted.toNumber(), netAmount);
+    });
+
+    it("3.2 Rejects missing co-signer", async () => {
+      await expectError(
+        program.methods
+          .mintToUser(userKeypair.publicKey, new BN(100 * ONE))
+          .accounts(mintAccounts(userKeypair.publicKey, userAtaSolusd))
+          .signers([mintingAuthority]) // no coSigner
+          .rpc(),
+        "Signature verification failed"
+      );
+    });
+
+    it("3.3 Rejects wrong minting authority", async () => {
+      const rando = Keypair.generate();
+      await airdrop(provider.connection, rando.publicKey);
+      await expectError(
+        program.methods
+          .mintToUser(userKeypair.publicKey, new BN(100 * ONE))
+          .accounts({ ...mintAccounts(userKeypair.publicKey, userAtaSolusd), mintingAuthority: rando.publicKey })
+          .signers([rando, coSigner])
+          .rpc(),
+        "UnauthorizedMinter"
+      );
+    });
+
+    it("3.4 Rejects when protocol is paused", async () => {
+      // Pause via authority
+      await program.methods.setPaused(true)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+
+      await expectError(
+        program.methods
+          .mintToUser(userKeypair.publicKey, new BN(100 * ONE))
+          .accounts(mintAccounts(userKeypair.publicKey, userAtaSolusd))
+          .signers([mintingAuthority, coSigner])
+          .rpc(),
+        "ProtocolPaused"
+      );
+
+      // Unpause
+      await program.methods.setPaused(false)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+    });
+
+    it("3.5 Rejects mint to frozen account", async () => {
+      const [frozenPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("frozen"), userKeypair.publicKey.toBuffer()],
+        program.programId
+      );
+      await program.methods.freezeAccount(userKeypair.publicKey)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, frozenAccount: frozenPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      await expectError(
+        program.methods
+          .mintToUser(userKeypair.publicKey, new BN(100 * ONE))
+          .accounts({ ...mintAccounts(userKeypair.publicKey, userAtaSolusd), frozenAccount: frozenPda })
+          .signers([mintingAuthority, coSigner])
+          .rpc(),
+        "AccountFrozen"
+      );
+
+      // Unfreeze
+      await program.methods.unfreezeAccount(userKeypair.publicKey)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, frozenAccount: frozenPda })
+        .rpc();
+    });
+
+    it("3.6 Rejects mint to blacklisted account", async () => {
+      const blacklistUser = Keypair.generate();
+      await airdrop(provider.connection, blacklistUser.publicKey, 2);
+      const blacklistAta = await getAssociatedTokenAddress(mintKeypair.publicKey, blacklistUser.publicKey);
+      const ix = createAssociatedTokenAccountInstruction(payer.publicKey, blacklistAta, blacklistUser.publicKey, mintKeypair.publicKey);
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
+
+      const [blacklistedPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("blacklisted"), blacklistUser.publicKey.toBuffer()],
+        program.programId
+      );
+      await program.methods.blacklistAccount(blacklistUser.publicKey)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, blacklistedAccount: blacklistedPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      await expectError(
+        program.methods
+          .mintToUser(blacklistUser.publicKey, new BN(100 * ONE))
+          .accounts({ ...mintAccounts(blacklistUser.publicKey, blacklistAta), blacklistedAccount: blacklistedPda })
+          .signers([mintingAuthority, coSigner])
+          .rpc(),
+        "AccountBlacklisted"
+      );
+    });
+
+    it("3.7 Rejects when reserves insufficient", async () => {
+      // Set reserves to 0
+      await program.methods.updateReserves(new BN(0))
+        .accounts({ oracleAuthority: oracleAuthority.publicKey, oracleConfig: oracleConfigPda })
+        .signers([oracleAuthority])
+        .rpc();
+
+      await expectError(
+        program.methods
+          .mintToUser(userKeypair.publicKey, new BN(100 * ONE))
+          .accounts(mintAccounts(userKeypair.publicKey, userAtaSolusd))
+          .signers([mintingAuthority, coSigner])
+          .rpc(),
+        "ReservesInsufficient"
+      );
+
+      // Restore reserves
+      await program.methods.updateReserves(new BN(100_000 * ONE))
+        .accounts({ oracleAuthority: oracleAuthority.publicKey, oracleConfig: oracleConfigPda })
+        .signers([oracleAuthority])
+        .rpc();
+    });
+
+    it("3.8 Rejects amount above per-tx cap", async () => {
+      // Set a tiny per-tx cap
+      await program.methods.updateMintCaps(new BN(1), DAILY_CAP)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+
+      await expectError(
+        program.methods
+          .mintToUser(userKeypair.publicKey, new BN(100 * ONE))
+          .accounts(mintAccounts(userKeypair.publicKey, userAtaSolusd))
+          .signers([mintingAuthority, coSigner])
+          .rpc(),
+        "MintCapExceeded"
+      );
+
+      // Restore caps
+      await program.methods.updateMintCaps(PER_TX_CAP, DAILY_CAP)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+    });
+
+    it("3.9 Rejects zero amount", async () => {
+      await expectError(
+        program.methods
+          .mintToUser(userKeypair.publicKey, new BN(0))
+          .accounts(mintAccounts(userKeypair.publicKey, userAtaSolusd))
+          .signers([mintingAuthority, coSigner])
+          .rpc(),
+        "ZeroAmount"
+      );
+    });
+  });
+
+  // ── 4. Redeem ─────────────────────────────────────────────────────────────
+
+  describe("4. Redeem (initiate_redeem)", () => {
+    let redeemUser: Keypair;
+    let redeemUserAta: PublicKey;
+
+    before(async () => {
+      redeemUser = Keypair.generate();
+      await airdrop(provider.connection, redeemUser.publicKey, 2);
+      redeemUserAta = await getAssociatedTokenAddress(mintKeypair.publicKey, redeemUser.publicKey);
+      const ix = createAssociatedTokenAccountInstruction(payer.publicKey, redeemUserAta, redeemUser.publicKey, mintKeypair.publicKey);
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
+
+      // Mint some solUSD to this user
+      await program.methods
+        .mintToUser(redeemUser.publicKey, new BN(100 * ONE))
+        .accounts({
+          mintingAuthority: mintingAuthority.publicKey,
+          coSigner: coSigner.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          mintAuthority: mintAuthorityPda,
+          oracleConfig: oracleConfigPda,
+          treasuryVault: treasuryVaultPda,
+          userSolusdAccount: redeemUserAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        })
+        .signers([mintingAuthority, coSigner])
+        .rpc();
+    });
+
+    it("4.1 Initiates redeem successfully", async () => {
+      const config = await program.account.config.fetch(configPda);
+      const redemptionId = config.redemptionCounter;
+
+      const [redemptionRecordPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), redeemUser.publicKey.toBuffer(), redemptionId.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+
+      const userBalBefore = Number((await getAccount(provider.connection, redeemUserAta)).amount);
+      const escrowBefore = Number((await getAccount(provider.connection, redeemEscrowPda)).amount);
+      const mintedBefore = config.totalSolusdMinted.toNumber();
+
+      const solusdAmount = new BN(50 * ONE);
+      await program.methods
+        .initiateRedeem(solusdAmount, redemptionId)
+        .accounts({
+          user: redeemUser.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redemptionRecord: redemptionRecordPda,
+          userSolusdAccount: redeemUserAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([redeemUser])
+        .rpc();
+
+      // solUSD moved to escrow
+      const userBalAfter = Number((await getAccount(provider.connection, redeemUserAta)).amount);
+      const escrowAfter = Number((await getAccount(provider.connection, redeemEscrowPda)).amount);
+      assert.equal(userBalBefore - userBalAfter, 50 * ONE);
+      assert.equal(escrowAfter - escrowBefore, 50 * ONE);
+
+      // total_solusd_minted unchanged
+      const configAfter = await program.account.config.fetch(configPda);
+      assert.equal(configAfter.totalSolusdMinted.toNumber(), mintedBefore);
+
+      // redemption counter incremented
+      assert.equal(configAfter.redemptionCounter.toNumber(), redemptionId.toNumber() + 1);
+
+      // record status is Pending
+      const record = await program.account.redemptionRecord.fetch(redemptionRecordPda);
+      assert.deepEqual(record.status, { pending: {} });
+      assert.equal(record.amount.toNumber(), 50 * ONE);
+    });
+
+    it("4.2 Rejects when paused", async () => {
+      await program.methods.setPaused(true)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+
+      const config = await program.account.config.fetch(configPda);
+      const redemptionId = config.redemptionCounter;
+      const [redemptionRecordPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), redeemUser.publicKey.toBuffer(), redemptionId.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+
+      await expectError(
+        program.methods
+          .initiateRedeem(new BN(10 * ONE), redemptionId)
+          .accounts({
+            user: redeemUser.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            redeemEscrow: redeemEscrowPda,
+            redemptionRecord: redemptionRecordPda,
+            userSolusdAccount: redeemUserAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([redeemUser])
+          .rpc(),
+        "ProtocolPaused"
+      );
+
+      await program.methods.setPaused(false)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+    });
+
+    it("4.3 Rejects zero amount", async () => {
+      const config = await program.account.config.fetch(configPda);
+      const redemptionId = config.redemptionCounter;
+      const [redemptionRecordPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), redeemUser.publicKey.toBuffer(), redemptionId.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+
+      await expectError(
+        program.methods
+          .initiateRedeem(new BN(0), redemptionId)
+          .accounts({
+            user: redeemUser.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            redeemEscrow: redeemEscrowPda,
+            redemptionRecord: redemptionRecordPda,
+            userSolusdAccount: redeemUserAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([redeemUser])
+          .rpc(),
+        "ZeroAmount"
+      );
+    });
+  });
+
+  // ── 5. Redeem lifecycle ───────────────────────────────────────────────────
+
+  describe("5. Redeem lifecycle", () => {
+    let lifecycleUser: Keypair;
+    let lifecycleAta: PublicKey;
+    let redemptionId0: BN;
+    let redemptionId1: BN;
+    let recordPda0: PublicKey;
+    let recordPda1: PublicKey;
+
+    before(async () => {
+      lifecycleUser = Keypair.generate();
+      await airdrop(provider.connection, lifecycleUser.publicKey, 2);
+      lifecycleAta = await getAssociatedTokenAddress(mintKeypair.publicKey, lifecycleUser.publicKey);
+      const ix = createAssociatedTokenAccountInstruction(payer.publicKey, lifecycleAta, lifecycleUser.publicKey, mintKeypair.publicKey);
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
+
+      // Mint 200 solUSD to user
+      await program.methods
+        .mintToUser(lifecycleUser.publicKey, new BN(200 * ONE))
+        .accounts({
+          mintingAuthority: mintingAuthority.publicKey,
+          coSigner: coSigner.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          mintAuthority: mintAuthorityPda,
+          oracleConfig: oracleConfigPda,
+          treasuryVault: treasuryVaultPda,
+          userSolusdAccount: lifecycleAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        })
+        .signers([mintingAuthority, coSigner])
+        .rpc();
+
+      // Initiate two redemptions
+      const config0 = await program.account.config.fetch(configPda);
+      redemptionId0 = config0.redemptionCounter;
+      [recordPda0] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), lifecycleUser.publicKey.toBuffer(), redemptionId0.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+      await program.methods
+        .initiateRedeem(new BN(50 * ONE), redemptionId0)
+        .accounts({
+          user: lifecycleUser.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redemptionRecord: recordPda0,
+          userSolusdAccount: lifecycleAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([lifecycleUser])
+        .rpc();
+
+      const config1 = await program.account.config.fetch(configPda);
+      redemptionId1 = config1.redemptionCounter;
+      [recordPda1] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), lifecycleUser.publicKey.toBuffer(), redemptionId1.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+      await program.methods
+        .initiateRedeem(new BN(50 * ONE), redemptionId1)
+        .accounts({
+          user: lifecycleUser.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redemptionRecord: recordPda1,
+          userSolusdAccount: lifecycleAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([lifecycleUser])
+        .rpc();
+    });
+
+    it("5.1 complete_redeem burns escrow and decrements supply", async () => {
+      const configBefore = await program.account.config.fetch(configPda);
+      const mintedBefore = configBefore.totalSolusdMinted.toNumber();
+
+      await program.methods
+        .completeRedeem(redemptionId0)
+        .accounts({
+          mintingAuthority: mintingAuthority.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redeemEscrowAuthority: redeemEscrowAuthorityPda,
+          redemptionRecord: recordPda0,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
+        .signers([mintingAuthority])
         .rpc();
-      assert.fail("Should have failed with zero amount");
-    } catch (err: any) {
-      if (err.message === "Should have failed with zero amount") throw err;
-      assert.ok(
-        err.toString().includes("Amount must be greater than zero") ||
-          err.toString().includes("ZeroAmount") ||
-          err.toString().includes("6000")
-      );
-    }
-  });
 
-  it("Updates fee rate (admin)", async () => {
-    const newFeeBps = new anchor.BN(50); // 0.50%
+      const configAfter = await program.account.config.fetch(configPda);
+      assert.equal(configAfter.totalSolusdMinted.toNumber(), mintedBefore - 50 * ONE);
 
-    const tx = await program.methods
-      .updateFee(newFeeBps)
-      .accounts({
-        authority: authority.publicKey,
-        config: configPda,
-      })
-      .rpc();
+      const record = await program.account.redemptionRecord.fetch(recordPda0);
+      assert.deepEqual(record.status, { completed: {} });
+    });
 
-    console.log("Update fee tx:", tx);
+    it("5.2 cancel_redeem returns solUSD to user", async () => {
+      const userBalBefore = Number((await getAccount(provider.connection, lifecycleAta)).amount);
 
-    const config = await program.account.config.fetch(configPda);
-    assert.equal(config.feeBps.toNumber(), 50);
-
-    // Reset fee for remaining tests
-    await program.methods
-      .updateFee(feeBps)
-      .accounts({
-        authority: authority.publicKey,
-        config: configPda,
-      })
-      .rpc();
-  });
-
-  it("Rejects fee above maximum", async () => {
-    try {
       await program.methods
-        .updateFee(new anchor.BN(1001))
+        .cancelRedeem(redemptionId1)
         .accounts({
-          authority: authority.publicKey,
+          mintingAuthority: mintingAuthority.publicKey,
           config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redeemEscrowAuthority: redeemEscrowAuthorityPda,
+          redemptionRecord: recordPda1,
+          userSolusdAccount: lifecycleAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         })
+        .signers([mintingAuthority])
         .rpc();
-      assert.fail("Should have failed with fee too high");
-    } catch (err: any) {
-      if (err.message === "Should have failed with fee too high") throw err;
-      assert.ok(
-        err.toString().includes("Fee must not exceed") ||
-          err.toString().includes("FeeTooHigh") ||
-          err.toString().includes("6003")
+
+      const userBalAfter = Number((await getAccount(provider.connection, lifecycleAta)).amount);
+      assert.equal(userBalAfter - userBalBefore, 50 * ONE);
+
+      const record = await program.account.redemptionRecord.fetch(recordPda1);
+      assert.deepEqual(record.status, { failed: {} });
+    });
+
+    it("5.3 complete_redeem rejects non-minting-authority", async () => {
+      // Need a new pending redemption for this test
+      const config = await program.account.config.fetch(configPda);
+      const rid = config.redemptionCounter;
+      const [rpda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), lifecycleUser.publicKey.toBuffer(), rid.toArrayLike(Buffer, "le", 8)],
+        program.programId
       );
-    }
-  });
-
-  it("Withdraws fees from treasury (admin)", async () => {
-    const treasuryBalance = Number(
-      (await getAccount(provider.connection, treasuryVaultPda)).amount
-    );
-    assert.isAbove(treasuryBalance, 0, "Treasury should have fees");
-
-    const withdrawAmount = new anchor.BN(100_000); // 0.10 USDC
-
-    const authorityUsdcBefore = Number(
-      (await getAccount(provider.connection, authorityUsdcAccount)).amount
-    );
-
-    const tx = await program.methods
-      .withdrawFees(withdrawAmount)
-      .accounts({
-        authority: authority.publicKey,
-        config: configPda,
-        treasury: treasuryPda,
-        treasuryVault: treasuryVaultPda,
-        authorityUsdcAccount: authorityUsdcAccount,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .rpc();
-
-    console.log("Withdraw fees tx:", tx);
-
-    const treasuryAfter = Number(
-      (await getAccount(provider.connection, treasuryVaultPda)).amount
-    );
-    assert.equal(treasuryAfter, treasuryBalance - 100_000);
-
-    const authorityUsdcAfter = Number(
-      (await getAccount(provider.connection, authorityUsdcAccount)).amount
-    );
-    assert.equal(authorityUsdcAfter - authorityUsdcBefore, 100_000);
-  });
-
-  it("Rejects unauthorized admin operations", async () => {
-    const randomUser = Keypair.generate();
-    const sig = await provider.connection.requestAirdrop(
-      randomUser.publicKey,
-      LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction(sig);
-
-    // Try update_fee with non-authority
-    try {
       await program.methods
-        .updateFee(new anchor.BN(100))
+        .initiateRedeem(new BN(10 * ONE), rid)
         .accounts({
-          authority: randomUser.publicKey,
+          user: lifecycleUser.publicKey,
           config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redemptionRecord: rpda,
+          userSolusdAccount: lifecycleAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
         })
-        .signers([randomUser])
+        .signers([lifecycleUser])
         .rpc();
-      assert.fail("Should have failed with unauthorized access");
-    } catch (err: any) {
-      if (err.message === "Should have failed with unauthorized access")
-        throw err;
-      assert.ok(
-        err.toString().includes("Unauthorized") ||
-          err.toString().includes("ConstraintRaw") ||
-          err.toString().includes("2012") ||
-          err.toString().includes("6002")
+
+      const rando = Keypair.generate();
+      await airdrop(provider.connection, rando.publicKey);
+      await expectError(
+        program.methods
+          .completeRedeem(rid)
+          .accounts({
+            mintingAuthority: rando.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            redeemEscrow: redeemEscrowPda,
+            redeemEscrowAuthority: redeemEscrowAuthorityPda,
+            redemptionRecord: rpda,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([rando])
+          .rpc(),
+        "UnauthorizedMinter"
       );
-    }
 
-    // Create random user's USDC ATA for withdraw_fees test
-    const randomUserUsdcAta = await getAssociatedTokenAddress(
-      usdcMint,
-      randomUser.publicKey
-    );
-    const createAtaIx = createAssociatedTokenAccountInstruction(
-      randomUser.publicKey,
-      randomUserUsdcAta,
-      randomUser.publicKey,
-      usdcMint
-    );
-    const createAtaTx = new anchor.web3.Transaction().add(createAtaIx);
-    createAtaTx.feePayer = randomUser.publicKey;
-    createAtaTx.recentBlockhash = (
-      await provider.connection.getLatestBlockhash()
-    ).blockhash;
-    createAtaTx.sign(randomUser);
-    const ataSig = await provider.connection.sendRawTransaction(
-      createAtaTx.serialize()
-    );
-    await provider.connection.confirmTransaction(ataSig);
-
-    // Try withdraw_fees with non-authority
-    try {
+      // Clean up — complete it with valid authority
       await program.methods
-        .withdrawFees(new anchor.BN(1000))
+        .completeRedeem(rid)
         .accounts({
-          authority: randomUser.publicKey,
+          mintingAuthority: mintingAuthority.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redeemEscrowAuthority: redeemEscrowAuthorityPda,
+          redemptionRecord: rpda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([mintingAuthority])
+        .rpc();
+    });
+
+    it("5.4 complete_redeem rejects already-completed record", async () => {
+      await expectError(
+        program.methods
+          .completeRedeem(redemptionId0)
+          .accounts({
+            mintingAuthority: mintingAuthority.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            redeemEscrow: redeemEscrowPda,
+            redeemEscrowAuthority: redeemEscrowAuthorityPda,
+            redemptionRecord: recordPda0,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([mintingAuthority])
+          .rpc(),
+        "RedemptionNotPending"
+      );
+    });
+
+    it("5.5 claim_refund rejects before 72h timeout", async () => {
+      // Create a fresh pending redemption
+      const config = await program.account.config.fetch(configPda);
+      const rid = config.redemptionCounter;
+      const [rpda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), lifecycleUser.publicKey.toBuffer(), rid.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+      await program.methods
+        .initiateRedeem(new BN(10 * ONE), rid)
+        .accounts({
+          user: lifecycleUser.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redemptionRecord: rpda,
+          userSolusdAccount: lifecycleAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([lifecycleUser])
+        .rpc();
+
+      await expectError(
+        program.methods
+          .claimRefund(rid)
+          .accounts({
+            user: lifecycleUser.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            redeemEscrow: redeemEscrowPda,
+            redeemEscrowAuthority: redeemEscrowAuthorityPda,
+            redemptionRecord: rpda,
+            userSolusdAccount: lifecycleAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          })
+          .signers([lifecycleUser])
+          .rpc(),
+        "RedemptionTimeoutNotReached"
+      );
+
+      // Clean up
+      await program.methods
+        .completeRedeem(rid)
+        .accounts({
+          mintingAuthority: mintingAuthority.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redeemEscrowAuthority: redeemEscrowAuthorityPda,
+          redemptionRecord: rpda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([mintingAuthority])
+        .rpc();
+    });
+  });
+
+  // ── 6. Compliance ─────────────────────────────────────────────────────────
+
+  describe("6. Compliance", () => {
+    it("6.1 set_paused(true) pauses protocol", async () => {
+      await program.methods.setPaused(true)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+      const config = await program.account.config.fetch(configPda);
+      assert.equal(config.isPaused, true);
+    });
+
+    it("6.2 set_paused(false) unpauses protocol", async () => {
+      await program.methods.setPaused(false)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+      const config = await program.account.config.fetch(configPda);
+      assert.equal(config.isPaused, false);
+    });
+
+    it("6.3 set_paused rejects non-authority", async () => {
+      const rando = Keypair.generate();
+      await airdrop(provider.connection, rando.publicKey);
+      await expectError(
+        program.methods.setPaused(true)
+          .accounts({ authority: rando.publicKey, config: configPda })
+          .signers([rando])
+          .rpc(),
+        "UnauthorizedAccess"
+      );
+    });
+
+    it("6.4 emergency_pause pauses immediately", async () => {
+      await program.methods.emergencyPause()
+        .accounts({ guardian: emergencyGuardian.publicKey, config: configPda })
+        .signers([emergencyGuardian])
+        .rpc();
+      const config = await program.account.config.fetch(configPda);
+      assert.equal(config.isPaused, true);
+
+      // Unpause via authority for subsequent tests
+      await program.methods.setPaused(false)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+    });
+
+    it("6.5 emergency_pause rejects non-guardian", async () => {
+      const rando = Keypair.generate();
+      await airdrop(provider.connection, rando.publicKey);
+      await expectError(
+        program.methods.emergencyPause()
+          .accounts({ guardian: rando.publicKey, config: configPda })
+          .signers([rando])
+          .rpc(),
+        "UnauthorizedAccess"
+      );
+    });
+
+    it("6.7 freeze_account creates frozen PDA", async () => {
+      const target = Keypair.generate().publicKey;
+      const [frozenPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("frozen"), target.toBuffer()], program.programId
+      );
+      await program.methods.freezeAccount(target)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, frozenAccount: frozenPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      const acct = await program.account.frozenAccount.fetch(frozenPda);
+      assert.ok(acct);
+
+      // 6.8 unfreeze removes it
+      await program.methods.unfreezeAccount(target)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, frozenAccount: frozenPda })
+        .rpc();
+      const info = await provider.connection.getAccountInfo(frozenPda);
+      assert.isNull(info);
+    });
+
+    it("6.9 blacklist_account creates blacklist PDA", async () => {
+      const target = Keypair.generate().publicKey;
+      const [blacklistedPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("blacklisted"), target.toBuffer()], program.programId
+      );
+      await program.methods.blacklistAccount(target)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, blacklistedAccount: blacklistedPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      const acct = await program.account.blacklistedAccount.fetch(blacklistedPda);
+      assert.ok(acct);
+    });
+  });
+
+  // ── 7. Admin ──────────────────────────────────────────────────────────────
+
+  describe("7. Admin", () => {
+    it("7.1 update_fee succeeds via authority", async () => {
+      await program.methods.updateFee(new BN(50))
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+      const config = await program.account.config.fetch(configPda);
+      assert.equal(config.feeBps.toNumber(), 50);
+
+      // Reset
+      await program.methods.updateFee(FEE_BPS)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+    });
+
+    it("7.2 update_fee rejects non-authority", async () => {
+      const rando = Keypair.generate();
+      await airdrop(provider.connection, rando.publicKey);
+      await expectError(
+        program.methods.updateFee(new BN(50))
+          .accounts({ authority: rando.publicKey, config: configPda })
+          .signers([rando])
+          .rpc(),
+        "UnauthorizedAccess"
+      );
+    });
+
+    it("7.3 update_fee rejects fee above maximum", async () => {
+      await expectError(
+        program.methods.updateFee(new BN(1001))
+          .accounts({ authority: provider.wallet.publicKey, config: configPda })
+          .rpc(),
+        "FeeTooHigh"
+      );
+    });
+
+    it("7.4 update_mint_caps succeeds", async () => {
+      await program.methods.updateMintCaps(new BN(2_000_000 * ONE), new BN(20_000_000 * ONE))
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+      const config = await program.account.config.fetch(configPda);
+      assert.equal(config.perTxMintCap.toNumber(), 2_000_000 * ONE);
+      assert.equal(config.dailyMintCap.toNumber(), 20_000_000 * ONE);
+    });
+
+    it("7.5 withdraw_fees succeeds", async () => {
+      const treasuryBal = Number((await getAccount(provider.connection, treasuryVaultPda)).amount);
+      assert.isAbove(treasuryBal, 0, "Treasury should have fees from minting");
+
+      const withdrawAmount = new BN(Math.min(treasuryBal, 1000));
+      const authorityBalBefore = Number((await getAccount(provider.connection, authorityAtaSolusd)).amount);
+
+      await program.methods.withdrawFees(withdrawAmount)
+        .accounts({
+          authority: provider.wallet.publicKey,
           config: configPda,
           treasury: treasuryPda,
           treasuryVault: treasuryVaultPda,
-          authorityUsdcAccount: randomUserUsdcAta,
+          authoritySolusdAccount: authorityAtaSolusd,
           tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         })
-        .signers([randomUser])
         .rpc();
-      assert.fail("Should have failed with unauthorized access");
-    } catch (err: any) {
-      if (err.message === "Should have failed with unauthorized access")
-        throw err;
-      assert.ok(
-        err.toString().includes("Unauthorized") ||
-          err.toString().includes("ConstraintRaw") ||
-          err.toString().includes("2012") ||
-          err.toString().includes("6002")
+
+      const authorityBalAfter = Number((await getAccount(provider.connection, authorityAtaSolusd)).amount);
+      assert.equal(authorityBalAfter - authorityBalBefore, withdrawAmount.toNumber());
+    });
+
+    it("7.6 withdraw_fees rejects exceeding treasury balance", async () => {
+      const treasuryBal = Number((await getAccount(provider.connection, treasuryVaultPda)).amount);
+      await expectError(
+        program.methods.withdrawFees(new BN(treasuryBal + 1))
+          .accounts({
+            authority: provider.wallet.publicKey,
+            config: configPda,
+            treasury: treasuryPda,
+            treasuryVault: treasuryVaultPda,
+            authoritySolusdAccount: authorityAtaSolusd,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          })
+          .rpc(),
+        "InsufficientTreasuryBalance"
       );
-    }
+    });
+
+    it("7.7 withdraw_fees rejects non-authority", async () => {
+      const rando = Keypair.generate();
+      await airdrop(provider.connection, rando.publicKey, 2);
+      const randoAta = await getAssociatedTokenAddress(mintKeypair.publicKey, rando.publicKey);
+      const ix = createAssociatedTokenAccountInstruction(payer.publicKey, randoAta, rando.publicKey, mintKeypair.publicKey);
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
+
+      await expectError(
+        program.methods.withdrawFees(new BN(1000))
+          .accounts({
+            authority: rando.publicKey,
+            config: configPda,
+            treasury: treasuryPda,
+            treasuryVault: treasuryVaultPda,
+            authoritySolusdAccount: randoAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          })
+          .signers([rando])
+          .rpc(),
+        "UnauthorizedAccess"
+      );
+    });
   });
 });

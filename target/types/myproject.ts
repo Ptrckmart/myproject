@@ -20,15 +20,14 @@ export type Myproject = {
         { "name": "treasury", "isMut": false, "isSigner": false },
         { "name": "redeemEscrow", "isMut": true, "isSigner": false },
         { "name": "redeemEscrowAuthority", "isMut": false, "isSigner": false },
+        { "name": "coSigner", "isMut": false, "isSigner": false },
+        { "name": "emergencyGuardian", "isMut": false, "isSigner": false },
         { "name": "tokenProgram", "isMut": false, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false },
-        { "name": "rent", "isMut": false, "isSigner": false }
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
       ],
       "args": [
         { "name": "feeBps", "type": "u64" },
         { "name": "mintingAuthority", "type": "publicKey" },
-        { "name": "coSigner", "type": "publicKey" },
-        { "name": "emergencyGuardian", "type": "publicKey" },
         { "name": "perTxMintCap", "type": "u64" },
         { "name": "dailyMintCap", "type": "u64" },
         { "name": "maxStalenessSeconds", "type": "i64" }
@@ -445,15 +444,14 @@ export const IDL: Myproject = {
         { "name": "treasury", "isMut": false, "isSigner": false },
         { "name": "redeemEscrow", "isMut": true, "isSigner": false },
         { "name": "redeemEscrowAuthority", "isMut": false, "isSigner": false },
+        { "name": "coSigner", "isMut": false, "isSigner": false },
+        { "name": "emergencyGuardian", "isMut": false, "isSigner": false },
         { "name": "tokenProgram", "isMut": false, "isSigner": false },
-        { "name": "systemProgram", "isMut": false, "isSigner": false },
-        { "name": "rent", "isMut": false, "isSigner": false }
+        { "name": "systemProgram", "isMut": false, "isSigner": false }
       ],
       "args": [
         { "name": "feeBps", "type": "u64" },
         { "name": "mintingAuthority", "type": "publicKey" },
-        { "name": "coSigner", "type": "publicKey" },
-        { "name": "emergencyGuardian", "type": "publicKey" },
         { "name": "perTxMintCap", "type": "u64" },
         { "name": "dailyMintCap", "type": "u64" },
         { "name": "maxStalenessSeconds", "type": "i64" }

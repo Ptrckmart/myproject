@@ -8,18 +8,20 @@ Each test case includes: what to call, what to assert, and what error to expect 
 
 ## Test Setup (before hook)
 
+> **Note:** The plan originally described setting up a Squads multisig vault as `authority`. In the actual implementation, `provider.wallet.publicKey` is used as `authority` (no Squads on localnet). The on-chain program only checks `authority.key() == config.authority`, so this simplification is valid for testing.
+
 ```
-1. Create fake solUSD mint keypair
-2. Create 5 Squads member keypairs; airdrop SOL to each
-3. Create Squads multisig (2-of-3 threshold for tests)
-4. Store vaultPda as `authority`
-5. Create minting_authority keypair (airdrop SOL)
-6. Create co_signer keypair (airdrop SOL)
-7. Create emergency_guardian keypair (airdrop SOL)
-8. Create oracle_authority keypair (airdrop SOL)
-9. Derive all PDAs (config, mintAuthority, oracleConfig, treasury, treasuryVault, redeemEscrow)
-10. Create authority's solUSD ATA (for receiving fee withdrawals)
+1. Create solUSD mint keypair
+2. Use provider.wallet.publicKey as authority (simulates multi-sig vault)
+3. Create minting_authority keypair (airdrop SOL)
+4. Create co_signer keypair (airdrop SOL)
+5. Create emergency_guardian keypair (airdrop SOL)
+6. Derive all PDAs (config, mintAuthority, oracleConfig, treasury, treasuryVault, redeemEscrow, redeemEscrowAuthority)
+7. Run initialize — minting_authority/co_signer/emergencyGuardian passed as accounts (not args)
+8. Create authority's solUSD ATA inside test 1.1 (requires mint to exist first)
 ```
+
+**Optional accounts sentinel:** `mintToUser` and `initiateRedeem` have optional `frozenAccount` and `blacklistedAccount` accounts. Anchor 0.30.1 requires all IDL accounts to be provided. Pass `program.programId` as sentinel for unused optional accounts. The `mintAccounts()` helper in the test file encapsulates this pattern for all `mintToUser` calls.
 
 ---
 

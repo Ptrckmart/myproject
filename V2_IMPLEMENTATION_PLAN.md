@@ -1,8 +1,8 @@
 # solUSD v2 — Implementation Plan
 
 **Based on:** solUSD_PRD.md
-**Current state:** v1 — USDC-backed, single-authority, no compliance controls
-**Target state:** v2 — fiat-backed, oracle proof-of-reserves, multi-sig, compliance controls, redemption escrow
+**Status:** Phases 1–9 complete. v2 is the current codebase. Phase 10 (off-chain API) is a separate repository.
+**Completed:** v2 — fiat-backed, oracle proof-of-reserves, multi-sig, compliance controls, redemption escrow (43/47 tests passing, 4 skipped — see CLAUDE.md)
 
 ---
 
@@ -12,7 +12,7 @@ Each step is self-contained and listed in dependency order. Steps within the sam
 
 ---
 
-## Phase 1 — State Layer (Data Structures)
+## Phase 1 — State Layer (Data Structures) ✅
 
 No instruction logic changes yet. Just the accounts that hold data.
 
@@ -110,7 +110,7 @@ Export all new state types: `OracleConfig`, `RedemptionRecord`, `FrozenAccount`,
 
 ---
 
-## Phase 2 — Errors and Events
+## Phase 2 — Errors and Events ✅
 
 ### Step 2.1 — Update `errors.rs`
 
@@ -155,7 +155,7 @@ New file. Anchor events emitted for all state changes. These are what the off-ch
 
 ---
 
-## Phase 3 — Rewrite Existing Instructions
+## Phase 3 — Rewrite Existing Instructions ✅
 
 ### Step 3.1 — Rewrite `instructions/initialize.rs`
 
@@ -265,7 +265,7 @@ Remove the `config.usdc_mint` constraint on `authority_usdc_account` — there i
 
 ---
 
-## Phase 4 — New Instructions
+## Phase 4 — New Instructions ✅
 
 ### Step 4.1 — Create `instructions/update_reserves.rs`
 
@@ -372,7 +372,7 @@ pub fn handler(ctx: Context<UpdateMintCaps>, per_tx_cap: u64, daily_cap: u64) ->
 
 ---
 
-## Phase 5 — Wire Everything Together
+## Phase 5 — Wire Everything Together ✅
 
 ### Step 5.1 — Update `instructions/mod.rs`
 
@@ -411,7 +411,7 @@ Also add `pub mod events;` at the top.
 
 ---
 
-## Phase 6 — PDAs to Remove
+## Phase 6 — PDAs to Remove ✅
 
 The following PDAs exist in v1 but have no role in v2. They will simply not be created during `initialize` anymore. Existing devnet/testnet deployments will need a migration or a fresh program deployment.
 
@@ -424,7 +424,7 @@ Remove all references to these from account structs and from `Config`. The `rese
 
 ---
 
-## Phase 7 — Build Verification
+## Phase 7 — Build Verification ✅
 
 ```bash
 /Users/patrick/.cargo/bin/anchor build --no-idl
@@ -437,7 +437,7 @@ Fix all compiler errors before proceeding. The biggest sources of errors will be
 
 ---
 
-## Phase 8 — Update Hand-Written IDL and TypeScript Types
+## Phase 8 — Update Hand-Written IDL and TypeScript Types ✅
 
 **`target/idl/myproject.json`** — must be updated manually (auto-gen is disabled). Changes needed:
 - Remove `mint` instruction, add `mintToUser`
@@ -452,7 +452,7 @@ Fix all compiler errors before proceeding. The biggest sources of errors will be
 
 ---
 
-## Phase 9 — Rewrite Tests
+## Phase 9 — Rewrite Tests ✅
 
 `tests/myproject.ts` must be rewritten to match the new instruction set. Key scenarios to cover:
 
@@ -514,7 +514,7 @@ Fix all compiler errors before proceeding. The biggest sources of errors will be
 
 ---
 
-## Phase 10 — Off-Chain API (Separate Codebase)
+## Phase 10 — Off-Chain API (Separate Codebase) 🔜 NOT STARTED
 
 The on-chain program is complete after Phase 9. The off-chain API is a separate backend service. High-level requirements for when that work begins:
 

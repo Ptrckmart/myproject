@@ -632,7 +632,118 @@ describe("solUSD v2", () => {
         .rpc();
     });
 
-    it("4.3 Rejects zero amount", async () => {
+    it("4.3 Rejects frozen account (initiate_redeem)", async () => {
+      const [frozenPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("frozen"), redeemUser.publicKey.toBuffer()],
+        program.programId
+      );
+      await program.methods.freezeAccount(redeemUser.publicKey)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, frozenAccount: frozenPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      const config = await program.account.config.fetch(configPda);
+      const redemptionId = config.redemptionCounter;
+      const [rpda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), redeemUser.publicKey.toBuffer(), redemptionId.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+
+      await expectError(
+        program.methods
+          .initiateRedeem(new BN(10 * ONE), redemptionId)
+          .accounts({
+            user: redeemUser.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            redeemEscrow: redeemEscrowPda,
+            redemptionRecord: rpda,
+            userSolusdAccount: redeemUserAta,
+            blacklistedAccount: program.programId,
+            frozenAccount: frozenPda,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([redeemUser])
+          .rpc(),
+        "AccountFrozen"
+      );
+
+      // Unfreeze
+      await program.methods.unfreezeAccount(redeemUser.publicKey)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, frozenAccount: frozenPda })
+        .rpc();
+    });
+
+    it("4.4 Rejects blacklisted account (initiate_redeem)", async () => {
+      // Create a fresh user, mint solUSD, then blacklist them
+      const blackRedeemUser = Keypair.generate();
+      await airdrop(provider.connection, blackRedeemUser.publicKey, 2);
+      const blackRedeemAta = await getAssociatedTokenAddress(mintKeypair.publicKey, blackRedeemUser.publicKey);
+      const ataIx = createAssociatedTokenAccountInstruction(payer.publicKey, blackRedeemAta, blackRedeemUser.publicKey, mintKeypair.publicKey);
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ataIx));
+
+      await program.methods.mintToUser(blackRedeemUser.publicKey, new BN(100 * ONE))
+        .accounts({
+          mintingAuthority: mintingAuthority.publicKey,
+          coSigner: coSigner.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          mintAuthority: mintAuthorityPda,
+          oracleConfig: oracleConfigPda,
+          treasuryVault: treasuryVaultPda,
+          userSolusdAccount: blackRedeemAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        })
+        .signers([mintingAuthority, coSigner])
+        .rpc();
+
+      const [blacklistedPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("blacklisted"), blackRedeemUser.publicKey.toBuffer()],
+        program.programId
+      );
+      await program.methods.blacklistAccount(blackRedeemUser.publicKey)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, blacklistedAccount: blacklistedPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      const config = await program.account.config.fetch(configPda);
+      const redemptionId = config.redemptionCounter;
+      const [rpda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), blackRedeemUser.publicKey.toBuffer(), redemptionId.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+
+      await expectError(
+        program.methods
+          .initiateRedeem(new BN(50 * ONE), redemptionId)
+          .accounts({
+            user: blackRedeemUser.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            redeemEscrow: redeemEscrowPda,
+            redemptionRecord: rpda,
+            userSolusdAccount: blackRedeemAta,
+            blacklistedAccount: blacklistedPda,
+            frozenAccount: program.programId,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([blackRedeemUser])
+          .rpc(),
+        "AccountBlacklisted"
+      );
+    });
+
+    it.skip("4.6 Rejects redeem amount too small after fee", () => {
+      // Requires fee_bps >= 10000 (100%) so that fee >= solusd_amount and net_usdc = 0.
+      // The program caps fee_bps at 1000 bps (10%); this code path is unreachable.
+    });
+
+    it("4.5 Rejects zero amount", async () => {
       const config = await program.account.config.fetch(configPda);
       const redemptionId = config.redemptionCounter;
       const [redemptionRecordPda] = PublicKey.findProgramAddressSync(

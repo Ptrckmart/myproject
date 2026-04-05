@@ -1192,6 +1192,31 @@ describe("solUSD v2", () => {
         .rpc();
     });
 
+    it("6.6 emergency_pause cannot unpause (only set_paused can)", async () => {
+      // emergency_pause only sets is_paused=true — calling it repeatedly never unpauses
+      await program.methods.emergencyPause()
+        .accounts({ guardian: emergencyGuardian.publicKey, config: configPda })
+        .signers([emergencyGuardian])
+        .rpc();
+      let config = await program.account.config.fetch(configPda);
+      assert.equal(config.isPaused, true);
+
+      // Calling emergency_pause again keeps it paused — does not unpause
+      await program.methods.emergencyPause()
+        .accounts({ guardian: emergencyGuardian.publicKey, config: configPda })
+        .signers([emergencyGuardian])
+        .rpc();
+      config = await program.account.config.fetch(configPda);
+      assert.equal(config.isPaused, true, "emergency_pause should not unpause");
+
+      // Only set_paused(false) can unpause
+      await program.methods.setPaused(false)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+      config = await program.account.config.fetch(configPda);
+      assert.equal(config.isPaused, false);
+    });
+
     it("6.5 emergency_pause rejects non-guardian", async () => {
       const rando = Keypair.generate();
       await airdrop(provider.connection, rando.publicKey);
@@ -1224,6 +1249,27 @@ describe("solUSD v2", () => {
       assert.isNull(info);
     });
 
+    it("6.8 unfreeze_account closes frozen PDA", async () => {
+      const target = Keypair.generate().publicKey;
+      const [frozenPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("frozen"), target.toBuffer()], program.programId
+      );
+      await program.methods.freezeAccount(target)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, frozenAccount: frozenPda, systemProgram: SystemProgram.programId })
+        .rpc();
+
+      // Account exists after freeze
+      let acct = await program.account.frozenAccount.fetch(frozenPda);
+      assert.ok(acct);
+
+      // Unfreeze closes the PDA
+      await program.methods.unfreezeAccount(target)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda, frozenAccount: frozenPda })
+        .rpc();
+      const info = await provider.connection.getAccountInfo(frozenPda);
+      assert.isNull(info);
+    });
+
     it("6.9 blacklist_account creates blacklist PDA", async () => {
       const target = Keypair.generate().publicKey;
       const [blacklistedPda] = PublicKey.findProgramAddressSync(
@@ -1235,6 +1281,12 @@ describe("solUSD v2", () => {
 
       const acct = await program.account.blacklistedAccount.fetch(blacklistedPda);
       assert.ok(acct);
+    });
+
+    it("6.10 no unblacklist instruction exists", () => {
+      // Blacklist is permanent — there is no unblacklistAccount instruction by design
+      assert.isUndefined((program.methods as any).unblacklistAccount,
+        "unblacklistAccount must not exist — blacklisting is permanent");
     });
   });
 

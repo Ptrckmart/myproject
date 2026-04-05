@@ -6,7 +6,7 @@ solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.1. The codeb
 
 **Program ID:** `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J`
 **GitHub:** https://github.com/Ptrckmart/myproject
-**PRD:** `solUSD_PRD.md`
+**PRD:** `solUSD_PRD.md` — Full requirements, user stories, and non-goals. Key decisions: strictly 1:1 fiat-backed (no algorithmic stability, no USDC migration path), USD-only (no multi-currency), fee-only revenue (no yield on reserves), multi-sig governance (no DAO). Read the PRD when reasoning about product scope — the on-chain design is already implemented.
 
 ---
 
@@ -221,6 +221,35 @@ programs/myproject/src/
     ├── compliance.rs             # emergency_pause, freeze_account, unfreeze_account, blacklist_account
     └── redeem_lifecycle.rs       # initiate_redeem, complete_redeem, cancel_redeem, claim_refund
 ```
+
+### PDA Seeds (compact)
+
+| Account | Seeds | Bump stored in |
+|---|---|---|
+| Config | `["config"]` | `config.bump` |
+| Mint Authority | `["mint-authority"]` | `config.mint_authority_bump` |
+| Oracle Config | `["oracle-config"]` | `config.oracle_config_bump`, `oracle_config.bump` |
+| Treasury | `["treasury"]` | `config.treasury_bump` |
+| Treasury Vault | `["treasury-vault"]` | — (SPL token account) |
+| Redeem Escrow | `["redeem-escrow"]` | `config.redeem_escrow_bump` |
+| Redeem Escrow Authority | `["redeem-escrow-authority"]` | — |
+| FrozenAccount | `["frozen", user_pubkey]` | `frozen.bump` |
+| BlacklistedAccount | `["blacklisted", user_pubkey]` | `blacklisted.bump` |
+| RedemptionRecord | `["redemption", user_pubkey, redemption_id.to_le_bytes()]` | `record.bump` |
+
+For full Rust/TypeScript derivation examples see `PDA_REFERENCE.md`.
+
+### Account `::LEN` Constants
+
+| Account | `LEN` | Formula |
+|---|---|---|
+| `Config` | 230 | `8 + 32*5 + 8*7 + 1 + 5` |
+| `OracleConfig` | 65 | `8 + 32 + 8 + 8 + 8 + 1` |
+| `RedemptionRecord` | 66 | `8 + 32 + 8 + 8 + 1 + 8 + 1` |
+| `FrozenAccount` | 9 | `8 + 1` |
+| `BlacklistedAccount` | 9 | `8 + 1` |
+
+SPL `Mint`=82, `TokenAccount`=165 (use `anchor_spl` constants, no custom `LEN`). For full field-by-field breakdown see `ACCOUNT_SIZES.md`.
 
 ### Supporting Files
 

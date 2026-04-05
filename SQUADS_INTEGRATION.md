@@ -1,6 +1,6 @@
 # Squads Protocol Integration
 
-> **Scope: Phase 10 (not yet started).** This document covers future mainnet integration. The current codebase and test suite use `provider.wallet.publicKey` as `authority` — no Squads setup is needed for local development or testing. Only read this file when working on Squads integration for devnet/mainnet deployment.
+> **Scope: Phase 10 (not yet started).** This document covers future mainnet integration. Phase 10 work will live in `api/` within this repo. The current on-chain program and test suite use `provider.wallet.publicKey` as `authority` — no Squads setup is needed for local development or testing. Only read this file when working on Squads integration for devnet/mainnet deployment.
 
 How Squads multi-sig works with the solUSD v2 program. Covers the mental model, how admin instructions are called, and how to test locally.
 

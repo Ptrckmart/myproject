@@ -43,9 +43,9 @@ Full 47-test suite in `tests/myproject.ts`. 43 passing, 4 skipped (clock-warp an
 
 ---
 
-## Phase 10 — Off-Chain API (Separate Codebase) 🔜 NOT STARTED
+## Phase 10 — Off-Chain API 🔜 NOT STARTED
 
-The on-chain program is complete. The off-chain API is a separate backend service. Requirements:
+The on-chain program is complete. The off-chain API lives in `api/` within this repo. Requirements:
 
 **Endpoints needed:**
 - `POST /mint/request` — user submits wallet address, gets bank wire instructions

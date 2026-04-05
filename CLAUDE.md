@@ -22,7 +22,7 @@ solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.1. The codeb
 | Look up account byte sizes | `ACCOUNT_SIZES.md` |
 | Understand error codes | `programs/myproject/src/errors.rs` |
 | Understand product requirements | `solUSD_PRD.md` |
-| Phase completion status | `V2_IMPLEMENTATION_PLAN.md` (phases 1–9 ✅, phase 10 not started) |
+| Phase completion status | `V2_IMPLEMENTATION_PLAN.md` (phases 1–9 ✅, phase 10 `api/` not started) |
 
 ## Deployment Status
 

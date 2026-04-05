@@ -1052,6 +1052,99 @@ describe("solUSD v2", () => {
         .signers([mintingAuthority])
         .rpc();
     });
+
+    it.skip("5.6 claim_refund succeeds after 72h timeout", () => {
+      // Requires advancing clock.unix_timestamp by >= 259200 seconds (72h).
+      // Not feasible in anchor localnet without clock warp support.
+    });
+
+    it("5.7 claim_refund rejects wrong user", async () => {
+      // Create a fresh user, mint solUSD, initiate a redemption
+      const refundUser = Keypair.generate();
+      await airdrop(provider.connection, refundUser.publicKey, 2);
+      const refundAta = await getAssociatedTokenAddress(mintKeypair.publicKey, refundUser.publicKey);
+      const ataIx = createAssociatedTokenAccountInstruction(payer.publicKey, refundAta, refundUser.publicKey, mintKeypair.publicKey);
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ataIx));
+
+      await program.methods.mintToUser(refundUser.publicKey, new BN(50 * ONE))
+        .accounts({
+          mintingAuthority: mintingAuthority.publicKey,
+          coSigner: coSigner.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          mintAuthority: mintAuthorityPda,
+          oracleConfig: oracleConfigPda,
+          treasuryVault: treasuryVaultPda,
+          userSolusdAccount: refundAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        })
+        .signers([mintingAuthority, coSigner])
+        .rpc();
+
+      const config = await program.account.config.fetch(configPda);
+      const rid = config.redemptionCounter;
+      const [rpda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("redemption"), refundUser.publicKey.toBuffer(), rid.toArrayLike(Buffer, "le", 8)],
+        program.programId
+      );
+      await program.methods
+        .initiateRedeem(new BN(10 * ONE), rid)
+        .accounts({
+          user: refundUser.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redemptionRecord: rpda,
+          userSolusdAccount: refundAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([refundUser])
+        .rpc();
+
+      // Wrong user tries to claim — seeds use user.key() so PDA mismatch causes ConstraintSeeds
+      const wrongUser = Keypair.generate();
+      await airdrop(provider.connection, wrongUser.publicKey, 2);
+      await expectError(
+        program.methods
+          .claimRefund(rid)
+          .accounts({
+            user: wrongUser.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            redeemEscrow: redeemEscrowPda,
+            redeemEscrowAuthority: redeemEscrowAuthorityPda,
+            redemptionRecord: rpda,
+            userSolusdAccount: refundAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          })
+          .signers([wrongUser])
+          .rpc(),
+        "2006" // ConstraintSeeds — PDA derived with wrongUser.key ≠ refundUser's redemption PDA
+      );
+
+      // Clean up — minting authority completes the redemption
+      await program.methods
+        .completeRedeem(rid)
+        .accounts({
+          mintingAuthority: mintingAuthority.publicKey,
+          config: configPda,
+          mint: mintKeypair.publicKey,
+          redeemEscrow: redeemEscrowPda,
+          redeemEscrowAuthority: redeemEscrowAuthorityPda,
+          redemptionRecord: rpda,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([mintingAuthority])
+        .rpc();
+    });
   });
 
   // ── 6. Compliance ─────────────────────────────────────────────────────────

@@ -24,12 +24,15 @@ solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.1. The codeb
 | Understand product requirements | `solUSD_PRD.md` |
 | Phase completion status | `V2_IMPLEMENTATION_PLAN.md` (phases 1–9 ✅, phase 10 `api/` not started) |
 | API build checklist | `API_BUILD_CHECKLIST.md` — 11-stage checklist for building the off-chain API |
+| API dev guide | `api/CLAUDE.md` — patterns, schema, gotchas specific to Phase 10 |
 
 ## Deployment Status
 
 The program is deployed on **devnet** at `3mcYviYiePvUudVFgYKwzipqNhUTDxTtgth2v9ApThMU`. Not yet on mainnet. Upgrade authority: `G6Z2hMk6kZEM6ht5LhdQko3DvpUCTbnVLQhnGX6ggBRX` (default CLI wallet).
 
 The off-chain API (`api/`) has not been started yet. Follow `API_BUILD_CHECKLIST.md` — 11 stages covering keypair setup, scaffold, SQLite store, Anchor client, mock bank, oracle, event listener, 72h monitor, REST endpoints, integration testing, and docs.
+
+**When working on Phase 10, read `api/CLAUDE.md` first** — it has API-specific build commands, all key TypeScript patterns (dual-sig, event parsing, PDA derivation), the SQLite schema, the IDL import path, and API-specific gotchas.
 
 ## Build & Test Commands
 

@@ -1,3 +1,18 @@
+//! mint_to_user instruction
+//!
+//! Single instruction: `mint_to_user(user_wallet: Pubkey, amount: u64)`
+//! Signers: minting_authority + co_signer (dual-sig)
+//!
+//! Checks (in order): minting_authority key, co_signer key, not paused,
+//!   not blacklisted, not frozen, oracle not stale, reserves sufficient,
+//!   per-tx cap, daily cap, amount > 0.
+//! Mints `net_amount = amount - fee` to user_solusd_account.
+//! Mints `fee` to treasury_vault.
+//! Emits MintExecuted.
+//!
+//! BPF note: blacklistedAccount and frozenAccount are optional PDAs.
+//! In tests, pass program.programId as sentinel when user is not blacklisted/frozen.
+
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, MintTo, Token, TokenAccount};
 

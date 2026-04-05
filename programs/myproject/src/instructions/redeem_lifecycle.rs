@@ -1,3 +1,26 @@
+//! Redeem lifecycle instructions (4 total)
+//!
+//! initiate_redeem(solusd_amount, redemption_id) — user
+//!   Moves solUSD from user → redeem-escrow. Creates RedemptionRecord (Pending).
+//!   Checks: not paused, not blacklisted, not frozen, amount > 0.
+//!   Emits RedeemInitiated.
+//!
+//! complete_redeem(redemption_id) — minting_authority
+//!   Burns escrowed solUSD. Sets record → Completed. Decrements total_solusd_minted.
+//!   Emits RedeemCompleted.
+//!
+//! cancel_redeem(redemption_id) — minting_authority
+//!   Returns escrowed solUSD to user. Sets record → Failed.
+//!   Emits RedeemCancelled.
+//!
+//! claim_refund(redemption_id) — redemption owner (after 72h timeout)
+//!   Returns escrowed solUSD to user. Sets record → Failed.
+//!   Fails with RedemptionTimeoutNotReached if < 72h since initiation.
+//!   Emits RefundClaimed.
+//!
+//! Escrow authority PDA: ["redeem-escrow-authority"] — signs transfer CPIs.
+//! complete/cancel/claim all close the RedemptionRecord on exit (rent reclaimed).
+
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount, Transfer};
 

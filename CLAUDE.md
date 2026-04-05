@@ -10,6 +10,10 @@ solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.1. The codeb
 
 ---
 
+## Deployment Status
+
+The program is **localnet only** — not deployed to devnet or mainnet. All work to date has been on a local validator via `anchor test`. There is no live program state to migrate or preserve.
+
 ## Build & Test Commands
 
 ```bash
@@ -33,6 +37,10 @@ cargo +solana generate-lockfile
 - **IDL discriminators** are `sha256("global:<instruction_name>")` first 8 bytes. Account discriminator for Config is `sha256("account:Config")` first 8 bytes.
 - **IDL and TS types are hand-maintained.** After any instruction, account, or error change, manually update `target/idl/myproject.json` and `target/types/myproject.ts`.
 
+### `mintAccounts` helper in tests
+
+All `mintToUser` calls in `tests/myproject.ts` go through a shared `mintAccounts()` helper function that pre-fills default accounts including the `program.programId` sentinels for optional accounts. When adding new mint test cases, use this helper rather than spelling out all accounts inline.
+
 ### BPF Pubkey Arg Corruption (Anchor 0.30.1)
 
 During `try_accounts`, Anchor/Solana internal code writes `Rent::default()` constants (lamports_per_byte_year=3480, exemption_threshold=2.0, burn_percent=50) to a fixed BPF virtual address. This address overlaps with deserialized instruction args on the stack. The overlap position shifts when the Accounts struct size changes. **Pubkey args (32 bytes) are large enough to straddle the corruption zone; u64/i64 args (8 bytes) are small enough to avoid it.**
@@ -40,6 +48,8 @@ During `try_accounts`, Anchor/Solana internal code writes `Rent::default()` cons
 **Rule:** Never pass Pubkey values as instruction args. Instead, pass them as `UncheckedAccount<'info>` fields in the Accounts struct and read them via `ctx.accounts.X.key()` in the handler.
 
 The `initialize` instruction uses this pattern for `minting_authority`, `co_signer`, and `emergency_guardian`.
+
+**Also at risk:** `freeze_account`, `unfreeze_account`, and `blacklist_account` take a `user: Pubkey` instruction arg. These currently work because the accounts struct is small enough that the corruption zone doesn't hit the single Pubkey arg. If the accounts struct for any of these instructions grows (new accounts added), the corruption zone may shift and corrupt the `user` arg. Apply the same fix (move to `UncheckedAccount`) if that happens.
 
 ### Optional Accounts Sentinel (Anchor 0.30.1)
 

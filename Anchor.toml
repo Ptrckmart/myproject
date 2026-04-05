@@ -5,7 +5,10 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-myproject = "7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J"
+myproject = "3mcYviYiePvUudVFgYKwzipqNhUTDxTtgth2v9ApThMU"
+
+[programs.devnet]
+myproject = "3mcYviYiePvUudVFgYKwzipqNhUTDxTtgth2v9ApThMU"
 
 [registry]
 url = "https://api.apr.dev"

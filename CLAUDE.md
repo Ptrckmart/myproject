@@ -4,7 +4,7 @@
 
 solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.1. The codebase is **v2** (fiat-backed with oracle proof-of-reserves, multi-sig governance, compliance controls, and a redemption escrow model). v1 (USDC-backed) has been retired and replaced entirely.
 
-**Program ID:** `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J`
+**Program ID:** `3mcYviYiePvUudVFgYKwzipqNhUTDxTtgth2v9ApThMU`
 **GitHub:** https://github.com/Ptrckmart/myproject
 **PRD:** `solUSD_PRD.md` — Full requirements, user stories, and non-goals. Key decisions: strictly 1:1 fiat-backed (no algorithmic stability, no USDC migration path), USD-only (no multi-currency), fee-only revenue (no yield on reserves), multi-sig governance (no DAO). Read the PRD when reasoning about product scope — the on-chain design is already implemented.
 
@@ -26,7 +26,7 @@ solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.1. The codeb
 
 ## Deployment Status
 
-The program is **localnet only** — not deployed to devnet or mainnet. All work to date has been on a local validator via `anchor test`. There is no live program state to migrate or preserve.
+The program is deployed on **devnet** at `3mcYviYiePvUudVFgYKwzipqNhUTDxTtgth2v9ApThMU`. Not yet on mainnet. Upgrade authority: `G6Z2hMk6kZEM6ht5LhdQko3DvpUCTbnVLQhnGX6ggBRX` (default CLI wallet).
 
 ## Build & Test Commands
 

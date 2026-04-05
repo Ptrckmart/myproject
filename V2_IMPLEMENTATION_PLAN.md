@@ -115,5 +115,5 @@ api/
 1. **Multi-sig:** Squads Protocol. The `authority` field holds the Squads vault address. Minimum 3-of-5 signers.
 2. **Fee model:** On-chain. `mint_to_user` mints `amount - fee` to user and `fee` to `treasury_vault` as solUSD.
 3. **Treasury vault:** Kept. `withdraw_fees` is a multi-sig admin instruction.
-4. **Program upgrade vs. new deploy:** Fresh deploy. v1 program ID `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J` is retired.
+4. **Program upgrade vs. new deploy:** Fresh deploy. v1 program ID `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J` is retired. v2 deployed at `3mcYviYiePvUudVFgYKwzipqNhUTDxTtgth2v9ApThMU`.
 5. **`redemption_id` generation:** Counter in Config. `redemption_counter` increments on each `initiate_redeem`. PDA seed: `["redemption", user_pubkey, redemption_counter.to_le_bytes()]`.

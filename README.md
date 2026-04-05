@@ -2,7 +2,7 @@
 
 solUSD is a regulated, fiat-backed stablecoin protocol built on Solana using the Anchor framework. Users receive solUSD after a fiat wire is confirmed off-chain by an authorized minting service; redemptions are settled via bank wire after solUSD is locked in escrow on-chain.
 
-**Program ID:** `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J`
+**Program ID:** `3mcYviYiePvUudVFgYKwzipqNhUTDxTtgth2v9ApThMU`
 
 ---
 

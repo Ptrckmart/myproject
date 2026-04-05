@@ -17,7 +17,6 @@ pub mod myproject {
     pub fn initialize(
         ctx: Context<Initialize>,
         fee_bps: u64,
-        minting_authority: Pubkey,
         per_tx_mint_cap: u64,
         daily_mint_cap: u64,
         max_staleness_seconds: i64,
@@ -25,7 +24,6 @@ pub mod myproject {
         instructions::initialize::handler(
             ctx,
             fee_bps,
-            minting_authority,
             per_tx_mint_cap,
             daily_mint_cap,
             max_staleness_seconds,

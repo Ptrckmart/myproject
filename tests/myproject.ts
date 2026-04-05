@@ -115,7 +115,6 @@ describe("solUSD v2", () => {
       await program.methods
         .initialize(
           FEE_BPS,
-          mintingAuthority.publicKey,
           PER_TX_CAP,
           DAILY_CAP,
           MAX_STALENESS,
@@ -130,6 +129,7 @@ describe("solUSD v2", () => {
           treasury: treasuryPda,
           redeemEscrow: redeemEscrowPda,
           redeemEscrowAuthority: redeemEscrowAuthorityPda,
+          mintingAuthorityAccount: mintingAuthority.publicKey,
           coSigner: coSigner.publicKey,
           emergencyGuardian: emergencyGuardian.publicKey,
           tokenProgram: TOKEN_PROGRAM_ID,
@@ -169,7 +169,6 @@ describe("solUSD v2", () => {
         program.methods
           .initialize(
             new BN(1001),
-            mintingAuthority.publicKey,
             PER_TX_CAP,
             DAILY_CAP,
             MAX_STALENESS,
@@ -184,6 +183,7 @@ describe("solUSD v2", () => {
             treasury: treasuryPda,
             redeemEscrow: redeemEscrowPda,
             redeemEscrowAuthority: redeemEscrowAuthorityPda,
+            mintingAuthorityAccount: mintingAuthority.publicKey,
             coSigner: coSigner.publicKey,
             emergencyGuardian: emergencyGuardian.publicKey,
             tokenProgram: TOKEN_PROGRAM_ID,
@@ -241,17 +241,9 @@ describe("solUSD v2", () => {
       await airdrop(provider.connection, userKeypair.publicKey, 2);
       userAtaSolusd = await getAssociatedTokenAddress(mintKeypair.publicKey, userKeypair.publicKey);
       const ix = createAssociatedTokenAccountInstruction(
-        userKeypair.publicKey, userAtaSolusd, userKeypair.publicKey, mintKeypair.publicKey
+        payer.publicKey, userAtaSolusd, userKeypair.publicKey, mintKeypair.publicKey
       );
-      const tx = new anchor.web3.Transaction().add(ix);
-      tx.feePayer = userKeypair.publicKey;
-      tx.recentBlockhash = (await provider.connection.getLatestBlockhash()).blockhash;
-      tx.sign(userKeypair);
-      await provider.connection.sendRawTransaction(tx.serialize());
-      await provider.connection.confirmTransaction(
-        (await provider.connection.getLatestBlockhash()).blockhash
-      ).catch(() => {});
-      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix)).catch(() => {});
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
     });
 
     const mintAccounts = (userWallet: PublicKey, userAta: PublicKey, extra?: {
@@ -266,6 +258,8 @@ describe("solUSD v2", () => {
       oracleConfig: oracleConfigPda,
       treasuryVault: treasuryVaultPda,
       userSolusdAccount: userAta,
+      blacklistedAccount: program.programId,
+      frozenAccount: program.programId,
       tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       ...(extra ?? {}),
@@ -469,6 +463,8 @@ describe("solUSD v2", () => {
           oracleConfig: oracleConfigPda,
           treasuryVault: treasuryVaultPda,
           userSolusdAccount: redeemUserAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         })
@@ -499,6 +495,8 @@ describe("solUSD v2", () => {
           redeemEscrow: redeemEscrowPda,
           redemptionRecord: redemptionRecordPda,
           userSolusdAccount: redeemUserAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -547,6 +545,8 @@ describe("solUSD v2", () => {
             redeemEscrow: redeemEscrowPda,
             redemptionRecord: redemptionRecordPda,
             userSolusdAccount: redeemUserAta,
+            blacklistedAccount: program.programId,
+            frozenAccount: program.programId,
             tokenProgram: TOKEN_PROGRAM_ID,
             associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -579,6 +579,8 @@ describe("solUSD v2", () => {
             redeemEscrow: redeemEscrowPda,
             redemptionRecord: redemptionRecordPda,
             userSolusdAccount: redeemUserAta,
+            blacklistedAccount: program.programId,
+            frozenAccount: program.programId,
             tokenProgram: TOKEN_PROGRAM_ID,
             associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
@@ -619,6 +621,8 @@ describe("solUSD v2", () => {
           oracleConfig: oracleConfigPda,
           treasuryVault: treasuryVaultPda,
           userSolusdAccount: lifecycleAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         })
@@ -641,6 +645,8 @@ describe("solUSD v2", () => {
           redeemEscrow: redeemEscrowPda,
           redemptionRecord: recordPda0,
           userSolusdAccount: lifecycleAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -663,6 +669,8 @@ describe("solUSD v2", () => {
           redeemEscrow: redeemEscrowPda,
           redemptionRecord: recordPda1,
           userSolusdAccount: lifecycleAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -739,6 +747,8 @@ describe("solUSD v2", () => {
           redeemEscrow: redeemEscrowPda,
           redemptionRecord: rpda,
           userSolusdAccount: lifecycleAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
@@ -817,6 +827,8 @@ describe("solUSD v2", () => {
           redeemEscrow: redeemEscrowPda,
           redemptionRecord: rpda,
           userSolusdAccount: lifecycleAta,
+          blacklistedAccount: program.programId,
+          frozenAccount: program.programId,
           tokenProgram: TOKEN_PROGRAM_ID,
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,

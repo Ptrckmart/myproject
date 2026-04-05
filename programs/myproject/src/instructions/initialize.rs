@@ -7,13 +7,13 @@ use crate::errors::StablecoinError;
 pub fn handler(
     ctx: Context<Initialize>,
     fee_bps: u64,
-    minting_authority: Pubkey,
     per_tx_mint_cap: u64,
     daily_mint_cap: u64,
     max_staleness_seconds: i64,
 ) -> Result<()> {
     require!(fee_bps <= 1_000, StablecoinError::FeeTooHigh);
 
+    let minting_authority = ctx.accounts.minting_authority_account.key();
     let co_signer = ctx.accounts.co_signer.key();
     let emergency_guardian = ctx.accounts.emergency_guardian.key();
 
@@ -38,7 +38,7 @@ pub fn handler(
     config.redeem_escrow_bump = ctx.bumps.redeem_escrow;
 
     let oracle = &mut ctx.accounts.oracle_config;
-    oracle.oracle_authority = minting_authority;
+    oracle.oracle_authority = ctx.accounts.minting_authority_account.key();
     oracle.total_usd_reserves = 0;
     oracle.last_updated = 0;
     oracle.max_staleness_seconds = max_staleness_seconds;
@@ -122,6 +122,9 @@ pub struct Initialize<'info> {
         bump,
     )]
     pub redeem_escrow_authority: UncheckedAccount<'info>,
+
+    /// CHECK: Minting authority key (passed as account to avoid Borsh corruption)
+    pub minting_authority_account: UncheckedAccount<'info>,
 
     /// CHECK: Co-signer key for dual-sig minting (passed as account to avoid Borsh corruption)
     pub co_signer: UncheckedAccount<'info>,

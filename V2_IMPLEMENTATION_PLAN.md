@@ -45,19 +45,68 @@ Full 47-test suite in `tests/myproject.ts`. 43 passing, 4 skipped (clock-warp an
 
 ## Phase 10 — Off-Chain API 🔜 NOT STARTED
 
-The on-chain program is complete. The off-chain API lives in `api/` within this repo. Requirements:
+The on-chain program is complete. The off-chain API lives in `api/` within this repo. Tech stack: Node.js / TypeScript (consistent with existing Anchor client code).
 
-**Endpoints needed:**
+### Banking Partner Strategy
+
+**Do not integrate a real banking partner yet.** Banking partnerships require business entity setup, KYC/AML compliance documentation, and approval processes that take weeks to months. Integrating prematurely blocks technical progress.
+
+**Recommended approach — build against a mock bank first:**
+1. Build the full API against a local stub service that simulates bank webhooks (`deposit confirmed`, `wire sent`)
+2. Complete and test the entire mint + redeem flow end-to-end on devnet
+3. Use the working demo to approach banking partners from a position of strength
+
+**When ready to integrate a real bank, recommended options:**
+
+| Partner | Best for | Notes |
+|---|---|---|
+| **Column** | Production stablecoin infrastructure | Direct bank (not middleware), programmable API, US only. Best long-term option. |
+| **Mercury** | Early-stage prototyping | Not a direct bank, uses partner banks. Easy setup but limited for programmatic money movement. |
+| **Synapse** | More features | BaaS middleware. Has had stability issues — evaluate carefully. |
+| **Stripe Treasury** | If already using Stripe | Simple but constrained for this use case. |
+
+Column is the recommended production target — it is a real bank with a developer-first API used by fintech startups for programmable money movement.
+
+### Build Order
+
+1. **Deploy to devnet** — fresh program deploy, record new program ID
+2. **Scaffold `api/`** — Node.js/TypeScript project with Anchor client wired up
+3. **Mock bank stub** — local Express service simulating bank webhooks
+4. **Oracle service** — polls mock bank balance, calls `update_reserves` on-chain
+5. **Event listener** — subscribes to `RedeemInitiated` on-chain, triggers mock wire
+6. **REST API** — endpoints for mint requests and redemption registration
+7. **End-to-end devnet test** — full mint and redeem cycle with mock bank
+8. **Swap in real bank** — replace mock stub with real banking partner API
+
+### API Directory Structure
+
+```
+api/
+├── package.json
+├── tsconfig.json
+├── .env.example          # Required env vars (RPC URL, keypair paths, bank API key)
+└── src/
+    ├── index.ts          # HTTP server entry point
+    ├── chain.ts          # Anchor client, transaction signing
+    ├── oracle.ts         # Bank balance polling → update_reserves
+    ├── listener.ts       # On-chain event listener → trigger wires
+    └── mock-bank.ts      # Stub bank for devnet testing (replace with real bank for mainnet)
+```
+
+### Endpoints
+
 - `POST /mint/request` — user submits wallet address, gets bank wire instructions
 - `GET /mint/status/:id` — poll deposit confirmation status
 - `POST /redeem/register-bank` — user registers bank account for redemption wires
 - `GET /redeem/status/:id` — poll redemption wire status
 
+### Infrastructure
+
 **Event listener:** Subscribe to `RedeemInitiated` events on-chain and trigger wire initiation.
 
 **Oracle service:** Periodically (at least every 12h) fetch bank balance and call `update_reserves` on-chain.
 
-**Key management:** `minting_authority` and `emergency_guardian` keypairs must be in HSM/KMS before mainnet. For devnet testing, use local keypairs.
+**Key management:** `minting_authority` and `co_signer` keypairs must be in HSM/KMS before mainnet. For devnet, use local keypairs stored in `.env` (never commit).
 
 ---
 

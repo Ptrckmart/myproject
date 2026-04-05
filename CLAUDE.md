@@ -2,12 +2,11 @@
 
 ## Project Overview
 
-solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.0. The current codebase is **v1** (USDC-backed). Active development is targeting **v2** (fiat-backed with oracle proof-of-reserves, multi-sig governance, compliance controls, and a redemption escrow model).
+solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.1. The codebase is **v2** (fiat-backed with oracle proof-of-reserves, multi-sig governance, compliance controls, and a redemption escrow model). v1 (USDC-backed) has been retired and replaced entirely.
 
 **Program ID:** `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J`
 **GitHub:** https://github.com/Ptrckmart/myproject
 **PRD:** `solUSD_PRD.md`
-**v2 Implementation Plan:** `V2_IMPLEMENTATION_PLAN.md`
 
 ---
 
@@ -27,69 +26,41 @@ cargo +solana generate-lockfile
 ## Important Gotchas
 
 - **Always use `--no-idl`** when building. The `anchor-syn 0.30.1` crate has a `source_file()` bug that breaks IDL auto-generation. The IDL and TypeScript types at `target/idl/myproject.json` and `target/types/myproject.ts` are hand-written and must be updated manually when instructions/accounts change.
+- **`target/` is gitignored.** `target/idl/myproject.json` and `target/types/myproject.ts` are never committed. They must be maintained by hand in your working directory.
 - **Use the cargo-installed anchor** at `/Users/patrick/.cargo/bin/anchor` (v0.30.0). The avm-managed anchor at `~/.avm/bin/anchor` has no version set and will error.
 - **Solana BPF tools use Cargo 1.75** which cannot handle crates using `edition2024`. If `Cargo.lock` is regenerated and build fails with rustc version errors, downgrade offending crates: `cargo +solana update <crate>@<new-version> --precise <older-version>`.
 - **macOS test ledger issue**: Always use `COPYFILE_DISABLE=1` and `rm -rf .anchor/test-ledger` before running tests to avoid `._genesis.bin` resource fork corruption.
 - **IDL discriminators** are `sha256("global:<instruction_name>")` first 8 bytes. Account discriminator for Config is `sha256("account:Config")` first 8 bytes.
 - **IDL and TS types are hand-maintained.** After any instruction, account, or error change, manually update `target/idl/myproject.json` and `target/types/myproject.ts`.
 
----
+### BPF Pubkey Arg Corruption (Anchor 0.30.1)
 
-## v1 Architecture (Current Code)
+During `try_accounts`, Anchor/Solana internal code writes `Rent::default()` constants (lamports_per_byte_year=3480, exemption_threshold=2.0, burn_percent=50) to a fixed BPF virtual address. This address overlaps with deserialized instruction args on the stack. The overlap position shifts when the Accounts struct size changes. **Pubkey args (32 bytes) are large enough to straddle the corruption zone; u64/i64 args (8 bytes) are small enough to avoid it.**
 
-This is what exists in the codebase right now. v2 will replace this.
+**Rule:** Never pass Pubkey values as instruction args. Instead, pass them as `UncheckedAccount<'info>` fields in the Accounts struct and read them via `ctx.accounts.X.key()` in the handler.
 
-### Instructions (5 total)
+The `initialize` instruction uses this pattern for `minting_authority`, `co_signer`, and `emergency_guardian`.
 
-| Instruction | Access | Description |
-|---|---|---|
-| `initialize(fee_bps)` | Admin | Creates config, solUSD mint, USDC reserve/treasury vaults |
-| `mint(usdc_amount)` | Anyone | Deposit USDC → receive solUSD (1:1 minus fee) |
-| `redeem(solusd_amount)` | Anyone | Burn solUSD → receive USDC (1:1 minus fee) |
-| `update_fee(new_fee_bps)` | Admin | Update fee rate (max 1000 bps / 10%) |
-| `withdraw_fees(amount)` | Admin | Withdraw USDC fees from treasury vault |
+### Optional Accounts Sentinel (Anchor 0.30.1)
 
-### PDAs (v1)
+Anchor 0.30.1 `validateAccounts` in `node_modules/@coral-xyz/anchor/src/program/common.ts` does **not** check the `optional` flag — it requires every IDL account to be provided. Workaround: pass `program.programId` as a sentinel for unused optional accounts:
 
-| PDA Seed | Purpose |
-|---|---|
-| `"config"` | Protocol state |
-| `"mint-authority"` | Signs solUSD mint_to operations |
-| `"reserve"` | Owns the reserve USDC token account |
-| `"reserve-vault"` | SPL token account holding USDC reserves |
-| `"treasury"` | Owns the treasury USDC token account |
-| `"treasury-vault"` | SPL token account holding USDC fees |
+```typescript
+blacklistedAccount: program.programId,  // user is not blacklisted
+frozenAccount: program.programId,       // user is not frozen
+```
 
-### Config State Fields (v1)
-
-`authority`, `mint` (solUSD), `usdc_mint`, `fee_bps`, `total_usdc_reserves`, `total_solusd_minted`, `bump`, `mint_authority_bump`, `reserve_bump`, `treasury_bump`
-
-### Error Codes (v1)
-
-6000=ZeroAmount, 6001=MathOverflow, 6002=UnauthorizedAccess, 6003=FeeTooHigh, 6004=InsufficientReserves, 6005=InsufficientTreasuryBalance, 6006=MintAmountTooSmall, 6007=RedeemAmountTooSmall
+The on-chain program checks `account.is_none()` — the program ID is never a valid PDA for these seeds, so it correctly evaluates as absent. This applies to `mintToUser` and `initiateRedeem` calls.
 
 ---
 
-## v2 Target Architecture
+## v2 Architecture
 
-### What Changes in v2
-
-| Aspect | v1 (Current) | v2 (Target) |
-|---|---|---|
-| Backing asset | USDC (on-chain) | USD (off-chain bank accounts) |
-| Mint trigger | User deposits USDC directly | Off-chain API after fiat confirmation |
-| Redeem trigger | User burns solUSD, gets USDC | User moves solUSD to escrow, receives fiat wire |
-| Reserve verification | Implicit (USDC in vault) | Explicit (Chainlink-style oracle) |
-| Admin model | Single authority key | Multi-sig (3-of-5 via Squads) |
-| Compliance controls | None | Pause, freeze, blacklist |
-| Circuit breaker | None | Auto-halt minting if reserves < supply |
-| Off-chain dependency | None | API layer + banking partner |
-
-### v2 Instructions (17 total)
+### Instructions (17 total)
 
 | Instruction | Access | Description |
 |---|---|---|
-| `initialize(fee_bps, minting_authority, co_signer, emergency_guardian, per_tx_cap, daily_cap, max_staleness_seconds)` | Deployer | Creates Config, solUSD mint, oracle config, treasury vault, redeem escrow |
+| `initialize(fee_bps, per_tx_cap, daily_cap, max_staleness_seconds)` | Deployer | Creates Config, solUSD mint, oracle config, treasury vault, redeem escrow. Pubkey args (minting_authority, co_signer, emergency_guardian) passed as accounts. |
 | `mint_to_user(user_wallet, amount)` | Minting Authority + Co-signer | Mint solUSD after fiat deposit; checks oracle, staleness, caps, compliance |
 | `initiate_redeem(solusd_amount, redemption_id)` | Any non-frozen/blacklisted user | Transfer solUSD to escrow, create RedemptionRecord, emit event |
 | `complete_redeem(redemption_id)` | Minting Authority | Burn escrowed solUSD after fiat wire confirmed |
@@ -103,13 +74,13 @@ This is what exists in the codebase right now. v2 will replace this.
 | `emergency_pause()` | Emergency Guardian | Immediately pause — cannot unpause |
 | `freeze_account(user)` | Multi-sig authority | Freeze a specific wallet |
 | `unfreeze_account(user)` | Multi-sig authority | Unfreeze a specific wallet |
-| `blacklist_account(user)` | Multi-sig authority | Permanently blacklist a wallet (no unblacklist) |
+| `blacklist_account(user)` | Multi-sig authority | Permanently blacklist a wallet (no unblacklist instruction) |
 
-### v2 PDAs
+### PDAs
 
 | PDA Seed | Type | Purpose |
 |---|---|---|
-| `"config"` | Config | Protocol state (updated fields) |
+| `"config"` | Config | Protocol state |
 | `"mint-authority"` | PDA | Signs solUSD mint_to operations |
 | `"oracle-config"` | OracleConfig | Oracle authority, reserve balance, staleness config |
 | `"treasury"` | PDA | Owns treasury token account |
@@ -119,9 +90,7 @@ This is what exists in the codebase right now. v2 will replace this.
 | `["blacklisted", user_pubkey]` | BlacklistedAccount | Existence = account is blacklisted |
 | `["redemption", user_pubkey, id]` | RedemptionRecord | Tracks status of individual redemptions |
 
-**Removed in v2:** `"reserve"` and `"reserve-vault"` PDAs (no on-chain USDC reserve).
-
-### v2 Config State Fields
+### Config State Fields
 
 ```
 authority              Pubkey    Multi-sig vault address (Squads)
@@ -144,9 +113,7 @@ oracle_config_bump     u8
 redeem_escrow_bump     u8
 ```
 
-**Removed from v1 Config:** `usdc_mint`, `total_usdc_reserves`, `reserve_bump`
-
-### v2 OracleConfig Fields
+### OracleConfig Fields
 
 ```
 oracle_authority       Pubkey    Who can call update_reserves
@@ -156,7 +123,7 @@ max_staleness_seconds  i64       Minting halts if data is older than this
 bump                   u8
 ```
 
-### v2 Error Codes (all 20)
+### Error Codes (all 20)
 
 | Code | Name | Description |
 |---|---|---|
@@ -181,7 +148,7 @@ bump                   u8
 | 6018 | RedemptionNotPending | Redemption is not in pending status |
 | 6019 | RedemptionTimeoutNotReached | 72h timeout has not elapsed |
 
-### v2 Key Flows
+### Key Flows
 
 **Mint flow:**
 1. User sends bank wire → banking partner confirms → off-chain API receives webhook
@@ -208,65 +175,50 @@ bump                   u8
 
 ## File Structure
 
-### Current (v1) Source Files
-
 ```
 programs/myproject/src/
 ├── lib.rs                        # Instruction routing
 ├── errors.rs                     # Error enum
 ├── helpers.rs                    # calculate_fee() utility
+├── events.rs                     # Anchor event definitions
 ├── state/
 │   ├── mod.rs
-│   └── config.rs                 # Config account struct
+│   ├── config.rs                 # Config account struct
+│   ├── oracle_config.rs
+│   ├── redemption_record.rs
+│   ├── frozen_account.rs
+│   └── blacklisted_account.rs
 └── instructions/
     ├── mod.rs
     ├── initialize.rs
-    ├── mint.rs
-    ├── redeem.rs
-    ├── admin.rs
-    └── withdraw_fees.rs
-```
-
-### New Files to Create (v2)
-
-```
-programs/myproject/src/
-├── events.rs                     # NEW: all Anchor event definitions
-├── state/
-│   ├── oracle_config.rs          # NEW
-│   ├── redemption_record.rs      # NEW
-│   ├── frozen_account.rs         # NEW
-│   └── blacklisted_account.rs    # NEW
-└── instructions/
-    ├── update_reserves.rs        # NEW
-    ├── compliance.rs             # NEW: set_paused, emergency_pause, freeze, unfreeze, blacklist
-    ├── redeem_lifecycle.rs       # NEW: complete_redeem, cancel_redeem, claim_refund
-    └── update_mint_caps.rs       # NEW
+    ├── mint_to_user.rs
+    ├── update_reserves.rs
+    ├── admin.rs                  # update_fee, update_mint_caps, withdraw_fees, set_paused
+    ├── compliance.rs             # emergency_pause, freeze_account, unfreeze_account, blacklist_account
+    └── redeem_lifecycle.rs       # initiate_redeem, complete_redeem, cancel_redeem, claim_refund
 ```
 
 ### Supporting Files
 
-- `target/idl/myproject.json` — Hand-written IDL (update manually after every change)
-- `target/types/myproject.ts` — Hand-written TS types (update manually after every change)
-- `tests/myproject.ts` — Integration tests (full rewrite required for v2)
-- `solUSD_PRD.md` — Full product requirements document for v2
-- `V2_IMPLEMENTATION_PLAN.md` — Step-by-step implementation plan (10 phases, 30 steps)
-- `PROJECT_SUMMARY.md` — High-level export summary of the project
-- `ACCOUNT_SIZES.md` — Exact byte layout and `::LEN` constants for all v2 accounts
+- `target/idl/myproject.json` — Hand-written IDL (gitignored; update manually after every change)
+- `target/types/myproject.ts` — Hand-written TS types (gitignored; update manually after every change)
+- `tests/myproject.ts` — Integration tests (47 test cases; see test status below)
+- `solUSD_PRD.md` — Full product requirements document
+- `ACCOUNT_SIZES.md` — Exact byte layout and `::LEN` constants for all accounts
 - `PDA_REFERENCE.md` — All PDA seeds with Rust and TypeScript derivation examples
 - `IDL_UPDATE_CHECKLIST.md` — Step-by-step checklist for manually updating IDL and TS types
 - `SQUADS_INTEGRATION.md` — How to build, sign, and test Squads multi-sig transactions
-- `TEST_PLAN.md` — Full 47-case test specification for v2
+- `TEST_PLAN.md` — Full 47-case test specification
 
 ---
 
-## v2 Open Questions (Resolve Before Coding)
+## Resolved Open Questions
 
-1. ~~**Multi-sig:** Squads Protocol (recommended) vs. native M-of-N~~ **DECIDED: Squads Protocol.** The `authority` field in Config stores the Squads vault address. All admin instructions use `authority.key() == config.authority` — no Anchor-level changes needed. The Squads vault PDA signs transactions after M-of-N approval off-chain. Minimum 3-of-5 signers required, configurable at init.
-2. ~~**Fee model**~~ **DECIDED: On-chain fee.** `mint_to_user` mints `amount - fee` to the user and `fee` to `treasury_vault` as solUSD. Fee is transparent and verifiable on-chain.
-3. ~~**Treasury vault in v2:** If fees are fiat-side, is `treasury_vault` and `withdraw_fees` still needed?~~ **DECIDED: Yes, kept.** `treasury_vault` holds accumulated solUSD fees. `withdraw_fees` remains as a multi-sig admin instruction.
-4. ~~**Program upgrade vs. new deploy**~~ **DECIDED: Fresh deploy.** v2 will deploy as a new program with a new program ID. The v1 program ID `7hRVbVHoJ4rZnjscFytTNxwZKBe3qir3KjJCgXVmnq9J` is retired. No mainnet state to migrate.
-5. ~~**`redemption_id` generation**~~ **DECIDED: Counter in Config.** Add `redemption_counter: u64` to Config. On each `initiate_redeem`, use the current counter as the `redemption_id` then increment. PDA seed: `["redemption", user_pubkey, redemption_counter.to_le_bytes()]`. Client reads `config.redemption_counter` before calling to derive the correct PDA.
+1. **Multi-sig:** Squads Protocol. The `authority` field in Config stores the Squads vault address. All admin instructions use `authority.key() == config.authority`. The Squads vault PDA signs transactions after M-of-N approval off-chain. Minimum 3-of-5 signers required.
+2. **Fee model:** On-chain fee. `mint_to_user` mints `amount - fee` to the user and `fee` to `treasury_vault` as solUSD.
+3. **Treasury vault:** Kept. `treasury_vault` holds accumulated solUSD fees. `withdraw_fees` is a multi-sig admin instruction.
+4. **Program upgrade vs. new deploy:** Fresh deploy. v2 deploys as a new program. The v1 program ID is retired.
+5. **`redemption_id` generation:** Counter in Config. `redemption_counter: u64` increments on each `initiate_redeem`. PDA seed: `["redemption", user_pubkey, redemption_counter.to_le_bytes()]`.
 
 ---
 
@@ -276,48 +228,33 @@ programs/myproject/src/
 - All token transfers use `anchor_spl::token::transfer` with CPI
 - PDA-signed transfers use `CpiContext::new_with_signer` with seed arrays
 - Fee math: `fee = amount * fee_bps / 10_000` using u128 intermediate to avoid overflow
-- Both solUSD uses 6 decimal places (matches USDC convention)
+- solUSD uses 6 decimal places (matches USDC convention)
 - Emit Anchor events for all state changes — the off-chain API depends on these
 
 ---
 
-## Open To-Dos (Test Suite Debugging)
+## Test Suite Status
 
-Current state: **14/29 tests passing**. The v2 on-chain program is complete and builds. Remaining failures are all in the test layer.
+**43 passing, 4 skipped** (all 47 tests accounted for).
 
-### Bug 1 — `initialize` arg corruption (test 1.1)
+| Section | Passing | Skipped |
+|---|---|---|
+| 1. Initialization | 2 | 0 |
+| 2. Oracle | 2 | 0 |
+| 3. Mint | 10 | 2 (3.11, 3.13) |
+| 4. Redeem | 5 | 1 (4.6) |
+| 5. Redeem lifecycle | 6 | 1 (5.6) |
+| 6. Compliance | 9 | 0 |
+| 7. Admin | 7 | 0 |
+| **Total** | **43** | **4** |
 
-**Symptom:** `config.mintingAuthority` is stored with wrong bytes on-chain after a successful `initialize` call.
+### Skipped tests and why
 
-**Root cause:** Anchor 0.30.1 BPF memory corruption. During `try_accounts` execution, some internal Solana/Anchor code (likely `Rent::default()` struct construction) overwrites a region of BPF memory that overlaps with deserialized instruction args. The corruption zone is approximately arg bytes 56–103 (relative to start of arg data, not including 8-byte discriminator).
+- **3.11** Daily cap resets after 24h — requires `clock.unix_timestamp` advance of 86400s; not feasible in standard anchor localnet
+- **3.13** Amount too small (net=0 after fee) — `MintAmountTooSmall` requires fee_bps ≥ 10000; program caps at 1000 bps so net_amount can never be 0
+- **4.6** Redeem too small after fee — same as 3.13 (`RedeemAmountTooSmall` is unreachable)
+- **5.6** claim_refund after 72h — requires clock advance of 259200s
 
-**Partial fix applied:** Moved `co_signer` and `emergency_guardian` from instruction args to `UncheckedAccount<'info>` entries in the `Initialize` accounts struct (they are read via `ctx.accounts.co_signer.key()` in the handler). This was the right approach but the corruption zone shifted to affect `mintingAuthority` (arg bytes 8–39) in the new layout. Need to re-diagnose the exact corruption range with the new 5-arg layout and potentially move `mintingAuthority` to accounts as well, or restructure arg order.
+### Non-obvious test placement
 
-**Files changed so far:** `initialize.rs`, `lib.rs`, `target/idl/myproject.json`, `target/types/myproject.ts`, `tests/myproject.ts`
-
-### Bug 2 — Optional accounts not supported by `validateAccounts` (tests 3.x)
-
-**Symptom:** All `mintToUser` calls fail with `Error: Account 'blacklistedAccount' not provided.`
-
-**Root cause:** Anchor 0.30.1 `validateAccounts` in `node_modules/@coral-xyz/anchor/src/program/common.ts` does NOT check the `optional` flag — it requires every IDL account to be provided.
-
-**Fix needed:** In every `.accounts({...})` call for `mintToUser`, pass `program.programId` as a sentinel value for unused optional accounts:
-```typescript
-frozenAccount: program.programId,    // not frozen
-blacklistedAccount: program.programId, // not blacklisted
-```
-This applies to test sections 3, 4, and 5 `before` hooks and individual test cases.
-
-### Bug 3 — `authorityAtaSolusd` undefined (tests 7.5, 7.6)
-
-**Symptom:** `withdraw_fees` tests fail because `authorityAtaSolusd` is `undefined`.
-
-**Root cause:** The ATA creation is inside test 1.1, after the failing assertion at line 144. Since 1.1 throws, the ATA is never created and the variable stays `undefined`.
-
-**Fix needed:** Move the `authorityAtaSolusd` creation block out of test 1.1 and into the top-level `before` hook (or into a dedicated `before` hook in section 7). The ATA creation only works after the mint exists, so it must run after `initialize` succeeds.
-
-### Downstream failures (auto-fix once bugs 1–3 are resolved)
-
-- Tests 2.1, 3.7 — `InvalidOracleAuthority` because `oracle.oracle_authority` was stored from the corrupted `mintingAuthority` arg
-- Tests 4.x, 5.x — fail in `before all` hook because minting never succeeded
-- Test 6.4 — `emergency_pause` — was fixed in last run (passes now)
+**Test 3.8** (stale oracle) is placed inside `describe("2. Oracle")` in the test file, *before* test 2.1 (`update_reserves`). This is intentional: `oracle.last_updated` is 0 from `initialize`, so staleness check fires naturally. Once `update_reserves` runs in 2.1, `last_updated` is no longer 0 and the stale condition would no longer hold without clock manipulation.

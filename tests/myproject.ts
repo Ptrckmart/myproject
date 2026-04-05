@@ -199,6 +199,40 @@ describe("solUSD v2", () => {
   // ── 2. Oracle ────────────────────────────────────────────────────────────
 
   describe("2. Oracle", () => {
+    it("3.8 Rejects mint when oracle is stale", async () => {
+      // oracle.last_updated == 0 at this point (set during initialize, updateReserves not yet called)
+      // current unix_timestamp >> max_staleness_seconds (86400), so oracle is stale
+      const staleUser = Keypair.generate();
+      await airdrop(provider.connection, staleUser.publicKey, 2);
+      const staleAta = await getAssociatedTokenAddress(mintKeypair.publicKey, staleUser.publicKey);
+      const ix = createAssociatedTokenAccountInstruction(
+        payer.publicKey, staleAta, staleUser.publicKey, mintKeypair.publicKey
+      );
+      await provider.sendAndConfirm(new anchor.web3.Transaction().add(ix));
+
+      await expectError(
+        program.methods
+          .mintToUser(staleUser.publicKey, new BN(100 * ONE))
+          .accounts({
+            mintingAuthority: mintingAuthority.publicKey,
+            coSigner: coSigner.publicKey,
+            config: configPda,
+            mint: mintKeypair.publicKey,
+            mintAuthority: mintAuthorityPda,
+            oracleConfig: oracleConfigPda,
+            treasuryVault: treasuryVaultPda,
+            userSolusdAccount: staleAta,
+            blacklistedAccount: program.programId,
+            frozenAccount: program.programId,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          })
+          .signers([mintingAuthority, coSigner])
+          .rpc(),
+        "StaleOracle"
+      );
+    });
+
     it("2.1 Updates reserves successfully", async () => {
       const amount = new BN(100_000 * ONE);
       await program.methods

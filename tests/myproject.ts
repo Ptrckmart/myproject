@@ -470,6 +470,43 @@ describe("solUSD v2", () => {
         "ZeroAmount"
       );
     });
+
+    it("3.10 Rejects when daily cap exceeded", async () => {
+      // Set daily_cap to current daily_minted so any further mint fails
+      const config = await program.account.config.fetch(configPda);
+      const currentDailyMinted = config.dailyMinted;
+
+      await program.methods.updateMintCaps(PER_TX_CAP, currentDailyMinted)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+
+      await expectError(
+        program.methods
+          .mintToUser(userKeypair.publicKey, new BN(100 * ONE))
+          .accounts(mintAccounts(userKeypair.publicKey, userAtaSolusd))
+          .signers([mintingAuthority, coSigner])
+          .rpc(),
+        "MintCapExceeded"
+      );
+
+      // Restore caps
+      await program.methods.updateMintCaps(PER_TX_CAP, DAILY_CAP)
+        .accounts({ authority: provider.wallet.publicKey, config: configPda })
+        .rpc();
+    });
+
+    it.skip("3.11 Daily cap resets after 24h window", () => {
+      // Requires advancing clock.unix_timestamp by > 86400 seconds.
+      // Not feasible in anchor localnet (no clock warp API).
+      // Behavior is implicitly tested: on the very first mint, daily_mint_window_start=0
+      // so window_elapsed > 86400 and the reset branch executes.
+    });
+
+    it.skip("3.13 Rejects amount too small (net=0 after fee)", () => {
+      // Requires fee_bps >= 10000 (100%) so that fee >= amount and net_amount = 0.
+      // The program caps fee_bps at 1000 bps (10%) via FeeTooHigh check, so this
+      // code path (MintAmountTooSmall) is unreachable through normal instructions.
+    });
   });
 
   // ── 4. Redeem ─────────────────────────────────────────────────────────────

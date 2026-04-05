@@ -12,6 +12,17 @@ Work through these in order. Each item is a discrete unit that can be committed 
 - [ ] Add `api/keypairs/` to `.gitignore` — never commit keypair files
 - [ ] Record both public keys — they must be passed to `initialize` when setting up the on-chain program on devnet
 
+## Stage 1b — Devnet Initialization
+
+The program is deployed but not initialized — no Config account exists on devnet yet. This must be done once before any API calls will work.
+
+- [ ] Create `api/scripts/initialize-devnet.ts`
+- [ ] Script loads the minting authority and co-signer keypairs from Stage 1
+- [ ] Calls `initialize` with the correct accounts and args (reference `tests/myproject.ts` test 1.1)
+- [ ] Run the script: `npx ts-node scripts/initialize-devnet.ts`
+- [ ] Verify: fetch the Config account on devnet and confirm `mintingAuthority` and `coSigner` match the generated keypairs
+- [ ] Record the Config PDA and OracleConfig PDA addresses for use in `.env`
+
 ## Stage 2 — Project Scaffold
 
 - [ ] Create `api/package.json` with dependencies (Express, Anchor, @solana/web3.js, dotenv, ts-node, better-sqlite3)

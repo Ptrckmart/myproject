@@ -10,6 +10,20 @@ solUSD is a fiat-backed stablecoin on Solana built with Anchor 0.30.1. The codeb
 
 ---
 
+## Quick Reference — Task to File
+
+| Task | Files to read/edit |
+|---|---|
+| Add/change an instruction | `programs/myproject/src/instructions/<file>.rs`, `lib.rs`, then update IDL + TS types |
+| Change account fields | `programs/myproject/src/state/<account>.rs`, `ACCOUNT_SIZES.md`, then update IDL + TS types |
+| Update IDL / TS types | `target/idl/myproject.json`, `target/types/myproject.ts` — follow `IDL_UPDATE_CHECKLIST.md` |
+| Add a test | `tests/myproject.ts` — use `mintAccounts()` helper for mint calls, `expectError()` for error cases |
+| Look up PDA seeds | `PDA_REFERENCE.md` |
+| Look up account byte sizes | `ACCOUNT_SIZES.md` |
+| Understand error codes | `programs/myproject/src/errors.rs` |
+| Understand product requirements | `solUSD_PRD.md` |
+| Phase completion status | `V2_IMPLEMENTATION_PLAN.md` (phases 1–9 ✅, phase 10 not started) |
+
 ## Deployment Status
 
 The program is **localnet only** — not deployed to devnet or mainnet. All work to date has been on a local validator via `anchor test`. There is no live program state to migrate or preserve.
@@ -214,9 +228,9 @@ programs/myproject/src/
 - `target/types/myproject.ts` — Hand-written TS types (gitignored; update manually after every change)
 - `tests/myproject.ts` — Integration tests (47 test cases; see test status below)
 - `solUSD_PRD.md` — Full product requirements document
-- `ACCOUNT_SIZES.md` — Exact byte layout and `::LEN` constants for all accounts
-- `PDA_REFERENCE.md` — All PDA seeds with Rust and TypeScript derivation examples
-- `IDL_UPDATE_CHECKLIST.md` — Step-by-step checklist for manually updating IDL and TS types
+- `ACCOUNT_SIZES.md` — Exact byte layout and `::LEN` constants (read this before changing account structs)
+- `PDA_REFERENCE.md` — All PDA seeds with Rust and TypeScript derivation examples (read this before deriving PDAs in new code)
+- `IDL_UPDATE_CHECKLIST.md` — Step-by-step checklist for manually updating IDL and TS types (follow this after every instruction/account change)
 - `SQUADS_INTEGRATION.md` — How to build, sign, and test Squads multi-sig transactions
 - `TEST_PLAN.md` — Full 47-case test specification
 
@@ -242,6 +256,30 @@ programs/myproject/src/
 - Emit Anchor events for all state changes — the off-chain API depends on these
 
 ---
+
+## Test File Key Symbols
+
+Key globals and helpers in `tests/myproject.ts` — read this before adding test cases to avoid scanning 1,400 lines.
+
+**Keypairs / roles**
+- `mintKeypair` — solUSD token mint
+- `mintingAuthority` — dual-sig minting key (also used as `oracleAuthority`)
+- `coSigner` — second minting signature
+- `emergencyGuardian` — emergency pause key
+- `payer` — fee payer (provider.wallet.payer)
+
+**PDAs** (all derived in top-level `before` hook)
+`configPda`, `mintAuthorityPda`, `oracleConfigPda`, `treasuryPda`, `treasuryVaultPda`, `redeemEscrowPda`, `redeemEscrowAuthorityPda`
+
+**Constants**
+- `ONE = 1_000_000` (1 solUSD in base units)
+- `FEE_BPS = 30`, `PER_TX_CAP = 1_000_000 * ONE`, `DAILY_CAP = 10_000_000 * ONE`
+
+**Helper functions**
+- `expectError(promise, code)` — asserts a tx fails with the given error name or code number
+- `airdrop(connection, pubkey, sol?)` — airdrops SOL and confirms
+- `createATA(provider, payer, mint, owner)` — creates an associated token account
+- `mintAccounts(userWallet, userAta, extra?)` — returns the full accounts object for a `mintToUser` call with `program.programId` sentinels pre-filled for optional accounts; pass `extra` to override individual fields
 
 ## Test Suite Status
 
